@@ -58,6 +58,8 @@ MARGEN_CUOTA_MINIMA = 0.05 # (*) la cuota mínima exige 5 % sobre la cuota justa
 CUOTA_PISO = 1.70          # (*) nunca apostar bajo esta cuota (regla de Eduardo)
 PROB_CANDIDATA = 0.55      # (*) sin cuota de mercado: candidata si prob ≥ 55 %
 CUOTA_MAX_CANDIDATA = 2.20 # (*) ... y la cuota mínima no supera 2.20
+LIGAS_EXCLUIDAS = ("N1", "P1")  # (*) ligas fuera del foco (Holanda: tarjetas peor que el promedio; Portugal: sobreestima "menos")
+LADOS_FOCO = ("under",)          # (*) lados que se muestran por defecto en el panel
 HORAS_ANTES_GENERAR = 48   # la señal se genera (y se congela) 48 h antes
 DIAS_PARA_ANULAR = 14      # señal sin resultado tras 14 días: se anula
 
@@ -69,6 +71,8 @@ PARAMETROS_AJUSTABLES = {
     "CUOTA_PISO": (1.20, 3.00),
     "PROB_CANDIDATA": (0.50, 0.85),
     "CUOTA_MAX_CANDIDATA": (1.40, 4.00),
+    "LIGAS_EXCLUIDAS": "ligas",
+    "LADOS_FOCO": "lados",
 }
 
 
@@ -83,6 +87,14 @@ def es_candidata(prob: float) -> bool:
 
 
 ZONA_HORARIA = "America/Santiago"
+
+ZONA_DATOS = "Europe/London"      # football-data publica la hora de inicio en hora del Reino Unido
+
+# ---------------------------------------------------------------- panel web
+WEB_HOST = os.environ.get("LIGASTATS_WEB_HOST", "127.0.0.1")
+WEB_PORT = int(os.environ.get("LIGASTATS_WEB_PORT", "8011"))
+WEB_USUARIO = os.environ.get("LIGASTATS_WEB_USUARIO", "eduardo")
+WEB_CLAVE = os.environ.get("LIGASTATS_WEB_CLAVE", "")
 
 # ---------------------------------------------------------------- MCP
 MCP_HOST = os.environ.get("LIGASTATS_MCP_HOST", "127.0.0.1")

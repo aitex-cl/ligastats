@@ -278,14 +278,16 @@ def ver_parametros() -> dict:
 @mcp.tool(annotations=ESCRITURA)
 def ajustar_parametro(nombre: Literal["MERCADOS_APUESTA", "MERCADO_PRINCIPAL", "MARGEN_VALOR",
                                       "MARGEN_CUOTA_MINIMA", "CUOTA_PISO", "PROB_CANDIDATA",
-                                      "CUOTA_MAX_CANDIDATA"],
+                                      "CUOTA_MAX_CANDIDATA", "LIGAS_EXCLUIDAS", "LADOS_FOCO"],
                       valor: str, motivo: str | None = None) -> dict:
     """Ajusta un parámetro de las señales dentro de su rango permitido (ver_parametros). Rige para las
-    proyecciones que se generen desde ahora; las ya creadas no cambian. MERCADOS_APUESTA se pasa como
-    lista separada por comas, p. ej. 'tarjetas,corners'. Queda registrado en el historial."""
+    proyecciones que se generen desde ahora; las ya creadas no cambian. MERCADOS_APUESTA, LIGAS_EXCLUIDAS
+    y LADOS_FOCO se pasan como lista separada por comas (p. ej. 'tarjetas,corners', 'N1,P1', 'under');
+    LIGAS_EXCLUIDAS puede quedar vacía (''). Queda registrado en el historial."""
     try:
         with db.conexion() as con:
-            v = valor if config.PARAMETROS_AJUSTABLES[nombre] in ("lista", "mercado") else float(valor)
+            regla = config.PARAMETROS_AJUSTABLES[nombre]
+            v = valor if isinstance(regla, str) else float(valor)
             res = db.guardar_parametro(con, nombre, v, motivo)
     except (ValueError, KeyError) as e:
         return {"error": str(e)}

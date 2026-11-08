@@ -209,11 +209,12 @@ def guardar_parametro(con, nombre: str, valor, motivo: str | None = None) -> dic
     regla = config.PARAMETROS_AJUSTABLES.get(nombre)
     if regla is None:
         raise ValueError(f"parámetro no ajustable: {nombre}")
-    if regla == "lista":
+    if regla in ("lista", "ligas", "lados"):
         if isinstance(valor, str):
             valor = [x.strip() for x in valor.split(",") if x.strip()]
-        if not valor or any(m not in config.MERCADOS for m in valor):
-            raise ValueError(f"mercados válidos: {', '.join(config.MERCADOS)}")
+        validos = {"lista": config.MERCADOS, "ligas": tuple(config.LIGAS), "lados": ("over", "under")}[regla]
+        if any(m not in validos for m in valor) or (regla != "ligas" and not valor):
+            raise ValueError(f"valores válidos: {', '.join(validos)}")
         valor = list(dict.fromkeys(valor))
     elif regla == "mercado":
         if valor not in config.MERCADOS:
