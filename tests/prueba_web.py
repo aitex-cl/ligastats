@@ -99,6 +99,19 @@ try:
     chequear(httpx.post(base + "/api/cuotas", headers=ok_h, json={"items": [{"proyeccion_id": pid, "cuota_menos": "0,5"}]})
              .status_code == 400, "rechaza cuota inválida")
     chequear('value="1,36"' in httpx.get(base + "/", headers=auth).text, "Hoy muestra las cuotas guardadas")
+    # guardar en otra línea (Lyon corners: candidata 9,5) y que el selector quede en la línea guardada
+    _c = __import__("sqlite3").connect(DATOS / "ligastats.db")
+    _c.execute("INSERT INTO proyecciones (partido_id, liga, fecha, hora, local, visita, mercado, linea, lado, "
+               "media_esperada, prob, cuota_justa, cuota_minima, tipo, version_modelo, creado_en) "
+               "VALUES ('F1|x|Lyon|Nantes','F1',?,'23:59','Lyon','Nantes','corners',10.5,'under',8.9,0.72,1.39,1.46,"
+               "'proyeccion','v1.1','t')", (hoy.isoformat(),))
+    _c.commit()
+    otra = _c.execute("SELECT id FROM proyecciones WHERE partido_id='F1|x|Lyon|Nantes' AND linea=10.5").fetchone()[0]
+    _c.close()
+    httpx.post(base + "/api/cuotas", headers=ok_h, json={"items": [{"proyeccion_id": otra, "cuota_menos": "1,50"}]})
+    hl = httpx.get(base + "/", headers=auth).text
+    bloque_lyon = hl[hl.index("Lyon – Nantes"):][:4000]
+    chequear('value="10.5" selected' in bloque_lyon, "el selector queda en la línea guardada (10,5)")
     r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "lado": "over", "cuota": "3,10",
                                                                "monto": "5000", "items": []})
     chequear(r.status_code == 200 and r.json()["lado"] == "over", "apuesta al lado contrario (más)")
