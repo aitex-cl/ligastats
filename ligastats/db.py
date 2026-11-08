@@ -180,6 +180,8 @@ MIGRACIONES = [
 def inicializar(ruta=None) -> None:
     with conectar(ruta) as con:
         con.executescript(ESQUEMA)
+        from .cuotas import ESQUEMA as ESQUEMA_CUOTAS
+        con.executescript(ESQUEMA_CUOTAS)
         for tabla, columna, sql in MIGRACIONES:
             cols = {r["name"] for r in con.execute(f"PRAGMA table_info({tabla})")}
             if columna not in cols:

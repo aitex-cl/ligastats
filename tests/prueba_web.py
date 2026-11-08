@@ -22,6 +22,8 @@ campos = ("partido_id, liga, fecha, hora, local, visita, arbitro, mercado, linea
 filas = [
     ("E0|x|Arsenal|Chelsea", "E0", hoy.isoformat(), "23:59", "Arsenal", "Chelsea", "M Oliver", "tarjetas", 4.5,
      "under", 3.9, 0.65, 1.54, 1.62, "candidata", "v1.1", "t"),
+    ("E0|x|Arsenal|Chelsea", "E0", hoy.isoformat(), "23:59", "Arsenal", "Chelsea", "M Oliver", "tarjetas", 4.5,
+     "over", 3.9, 0.35, 2.86, 3.0, "proyeccion", "v1.1", "t"),
     ("N1|x|Ajax|PSV", "N1", hoy.isoformat(), "23:59", "Ajax", "PSV", None, "tarjetas", 4.5,
      "under", 3.9, 0.66, 1.52, 1.60, "candidata", "v1.1", "t"),
     ("E0|y|Everton|Wolves", "E0", ayer.isoformat(), "15:00", "Everton", "Wolves", None, "tarjetas", 5.5,
@@ -68,47 +70,56 @@ try:
     malo = {"Authorization": "Basic " + base64.b64encode(b"eduardo:otra").decode()}
     chequear(httpx.get(base + "/").status_code == 401, "sin clave: 401")
     chequear(httpx.get(base + "/", headers=malo).status_code == 401, "clave incorrecta: 401")
+    import re
     r = httpx.get(base + "/", headers=auth)
-    chequear(r.status_code == 200 and "Arsenal" in r.text, "Hoy muestra la candidata de la Premier")
-    chequear("Ajax" not in r.text, "Hoy oculta Holanda (fuera del foco)")
-    chequear("≥ 1,70" in r.text, "aplica el piso de cuota 1,70")
-    chequear("Ajax" in httpx.get(base + "/?todas=1", headers=auth).text, "Ver todas incluye Holanda")
-    chequear("Lyon" not in r.text and "Roma" not in r.text, "Hoy (tarjetas) no mezcla corners ni goles")
-    r2 = httpx.get(base + "/?mercado=corners", headers=auth)
-    chequear("Lyon" in r2.text and "En observación" in r2.text, "pestaña Corners muestra corners en observación")
-    chequear("Roma" in httpx.get(base + "/?mercado=goles", headers=auth).text, "pestaña Goles muestra goles")
+    chequear(r.status_code == 200 and "Arsenal" in r.text, "Hoy muestra el partido de la Premier")
+    chequear("Ajax" not in r.text, "Hoy oculta Holanda (liga excluida)")
+    chequear("Ajax" in httpx.get(base + "/?todas=1", headers=auth).text, "Ver también ligas excluidas")
+    chequear("Lyon" in r.text and "Roma" in r.text, "partidos con candidatas de corners y goles también aparecen")
+    chequear('data-min="1.7"' in r.text, "aplica el piso de cuota 1,70")
+    chequear(r.text.count('class="mb"') >= 3 and "<select" in r.text, "bloques por mercado con selector de línea")
+    chequear("Guardar cuotas" in r.text and "Apostar menos" in r.text and "Apostar más" in r.text, "botones presentes")
+    m = re.search(r'class="card"><div class="p">Arsenal.*?class="mb" data-mercado="tarjetas" data-id="(\d+)"', r.text, re.S)
+    pid = int(m.group(1))
+    api = {**auth, "Content-Type": "application/json"}
+    ok_h = {**api, "X-Senales": "1"}
+    chequear(httpx.post(base + "/api/cuotas", headers=api, json={"items": [{"proyeccion_id": pid, "cuota_menos": "1,5"}]})
+             .status_code == 403, "API sin encabezado del panel: 403")
+    chequear(httpx.post(base + "/api/cuotas", headers={**ok_h, "Origin": "https://malo.com"},
+                        json={"items": [{"proyeccion_id": pid, "cuota_menos": "1,5"}]}).status_code == 403,
+             "API desde otro sitio: 403")
+    chequear(httpx.post(base + "/api/cuotas", headers={"X-Senales": "1"},
+                        json={"items": [{"proyeccion_id": pid, "cuota_menos": "1,5"}]}).status_code == 401, "API sin clave: 401")
+    r = httpx.post(base + "/api/cuotas", headers=ok_h, json={"items": [{"proyeccion_id": pid, "cuota_menos": "1,36", "cuota_mas": "3,10"}]})
+    chequear(r.status_code == 200 and r.json()["guardadas"] == 1, "guarda cuotas de menos y más")
+    ev = r.json()["detalle"][0]["evaluacion"]
+    chequear(ev["under"]["conviene"] is False and "prob_casa_sin_margen" in ev["under"], "evalúa lados y quita el margen")
+    chequear(httpx.post(base + "/api/cuotas", headers=ok_h, json={"items": [{"proyeccion_id": pid, "cuota_menos": "0,5"}]})
+             .status_code == 400, "rechaza cuota inválida")
+    chequear('value="1,36"' in httpx.get(base + "/", headers=auth).text, "Hoy muestra las cuotas guardadas")
+    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "lado": "over", "cuota": "3,10",
+                                                               "monto": "5000", "items": []})
+    chequear(r.status_code == 200 and r.json()["lado"] == "over", "apuesta al lado contrario (más)")
+    aid = r.json()["apuesta_id"]
+    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "1,9", "monto": "5000"})
+    chequear(r.status_code == 400 and "ya tiene" in r.json()["error"], "una sola apuesta por línea")
+    chequear("Apostada" in httpx.get(base + "/", headers=auth).text, "Hoy muestra la apuesta registrada")
+    r = httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "ganada"})
+    chequear(r.status_code == 200 and r.json()["ganancia"] == 10500.0, "resultado ganada: +$10.500")
+    r = httpx.get(base + "/apuestas", headers=auth)
+    chequear(r.status_code == 200 and "a mano" in r.text and "+$10.500" in r.text, "Mis apuestas: ganada a mano")
+    # resultados a cuotas reales: guardar cuotas para la candidata ya liquidada (Everton, menos 5,5 acertada)
+    import sqlite3 as _sq
+    _c = _sq.connect(DATOS / "ligastats.db")
+    ev_id = _c.execute("SELECT id FROM proyecciones WHERE local='Everton' AND fecha=?", (ayer.isoformat(),)).fetchone()[0]
+    _c.close()
+    httpx.post(base + "/api/cuotas", headers=ok_h, json={"items": [{"proyeccion_id": ev_id, "cuota_menos": "1,36", "cuota_mas": "3,20"}]})
     r = httpx.get(base + "/resultados", headers=auth)
     chequear(r.status_code == 200 and "1 de 2" in r.text, "Resultados: 1 de 2 acertadas")
     chequear("59 %" in r.text, "mínimo para no perder con cuota 1,70 (59 %)")
-    r = httpx.get(base + "/", headers=auth)
-    chequear('name="cuota"' in r.text and "Apostar" in r.text, "Hoy tiene campo de cuota y botón Apostar")
-    import re
-    pid = int(re.search(r'data-id="(\d+)"', r.text).group(1))
-    api = {**auth, "Content-Type": "application/json"}
-    chequear(httpx.post(base + "/api/apostar", headers=api, json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"})
-             .status_code == 403, "API sin encabezado del panel: 403")
-    chequear(httpx.post(base + "/api/apostar", headers={**api, "X-Senales": "1", "Origin": "https://malo.com"},
-                        json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"}).status_code == 403,
-             "API desde otro sitio: 403")
-    chequear(httpx.post(base + "/api/apostar", json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"},
-                        headers={"X-Senales": "1"}).status_code == 401, "API sin clave: 401")
-    ok_h = {**api, "X-Senales": "1"}
-    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"})
-    chequear(r.status_code == 200 and r.json()["cuota"] == 1.85, "registra apuesta con cuota 1,85")
-    aid = r.json()["apuesta_id"]
-    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "1,9", "monto": "5000"})
-    chequear(r.status_code == 400 and "ya tiene" in r.json()["error"], "no permite apostar dos veces la misma")
-    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "0,5", "monto": "5000"})
-    chequear(r.status_code == 400, "rechaza cuota inválida")
-    chequear("Apostada a" in httpx.get(base + "/", headers=auth).text, "Hoy muestra la apuesta registrada")
-    r = httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "ganada"})
-    chequear(r.status_code == 200 and r.json()["ganancia"] == 4250.0, "resultado ganada: +$4.250")
-    r = httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "anulada"})
-    chequear(r.status_code == 200 and r.json()["estado"] == "nula", "se puede corregir a anulada")
-    httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "ganada"})
-    r = httpx.get(base + "/apuestas", headers=auth)
-    chequear(r.status_code == 200 and "a mano" in r.text and "+$4.250" in r.text, "Mis apuestas: ganada a mano")
-    chequear("sel-ganada" in r.text, "botón Ganada marcado")
+    chequear("A cuotas reales de la casa" in r.text and "+36.0 %" in r.text, "simulación a cuota real (+36 %)")
+    r2 = httpx.get(base + "/resultados?mercado=corners", headers=auth)
+    chequear(r2.status_code == 200 and "En observación" in r2.text, "Resultados por mercado (corners en observación)")
     chequear(r.headers.get("x-robots-tag", "").startswith("noindex"), "no indexable")
 finally:
     srv.terminate()

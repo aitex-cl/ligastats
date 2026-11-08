@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import json
 from datetime import date, datetime, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
@@ -25,6 +26,7 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from . import apuestas as reg_apuestas
+from . import cuotas as reg_cuotas
 from . import config, db
 from .rendimiento import acierto_vs_minimo, rendimiento_apuestas
 
@@ -140,24 +142,55 @@ button.pri{background:var(--a);border-color:var(--a);color:#fff;font-weight:600}
 .btns button.sel-perdida{background:var(--no);border-color:var(--no);color:#fff}
 .btns button.sel-nula{background:var(--s);border-color:var(--s);color:#fff}
 .ver{font-size:12px;min-height:16px}.err{color:var(--no);font-size:12px}
+.cuo{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.lado{border:1px solid var(--b);border-radius:10px;padding:8px;background:var(--f);display:flex;flex-direction:column;gap:6px}
+.lado input,.pie input{width:100%;font:inherit;font-size:16px;padding:7px 8px;border:1px solid var(--b);border-radius:8px;background:var(--c);color:var(--t)}
+.lado.cand{border-color:var(--a)}
+.pie{display:flex;gap:8px;align-items:center;margin-top:8px}.pie input{width:110px;flex:0 0 auto}.pie button{flex:1}
+.mk{font-size:12px;color:var(--s);margin-top:4px}
+.mb{margin-top:12px;padding-top:10px;border-top:1px dashed var(--b)}
+.mb .cab{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mb select{font:inherit;font-size:15px;padding:5px 8px;border:1px solid var(--b);border-radius:8px;background:var(--f);color:var(--t)}
+.badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--a);color:#fff;margin:4px 4px 0 0}
 """
 
 
 JS = """
 function num(v){v=(v||'').toString().replace(',','.').trim();return v===''?NaN:Number(v)}
-function veredicto(inp){const c=inp.closest('.ap'),min=Number(c.dataset.min),v=num(inp.value),o=c.querySelector('.ver');
- if(isNaN(v)){o.textContent='mín. '+min.toFixed(2).replace('.',',');o.className='ver m';return}
- if(v>=min){o.textContent='✓ conviene';o.className='ver ok'}else{o.textContent='✗ bajo el mínimo';o.className='ver no'}}
-async function enviar(url,datos,boton){boton.disabled=true;const caja=boton.closest('.ap,.btns').parentElement;
- const e=caja.querySelector('.err');if(e)e.textContent='';
+function fmt(x){return x.toFixed(2).replace('.',',')}
+function pc(x){return Math.round(100*x)+' %'}
+function lineaActual(mb){const L=JSON.parse(mb.dataset.lineas);return L[mb.querySelector('select').value]}
+function cambiarLinea(sel){const mb=sel.closest('.mb'),d=lineaActual(mb);mb.dataset.id=d.id;
+ mb.querySelectorAll('.lado').forEach(l=>{const u=l.dataset.lado==='under';l.dataset.min=u?d.mu:d.mo;
+  l.querySelector('.pl').textContent=(u?'Menos ':'Más ')+d.t;l.querySelector('.pm').textContent='modelo '+pc(u?d.pu:1-d.pu);
+  l.querySelector('input').value=(u?d.cu:d.co)||''});actualizar(mb)}
+function actualizar(mb){let cm=NaN,cx=NaN;
+ mb.querySelectorAll('.lado').forEach(l=>{const v=num(l.querySelector('input').value),min=Number(l.dataset.min),o=l.querySelector('.ver');
+  if(l.dataset.lado==='under')cm=v;else cx=v;
+  if(isNaN(v)){o.textContent='mín. '+fmt(min);o.className='ver m'}
+  else if(v>=min){o.textContent='✓ conviene';o.className='ver ok'}else{o.textContent='✗ bajo el mínimo';o.className='ver no'}});
+ const mk=mb.querySelector('.mk');
+ if(!isNaN(cm)&&!isNaN(cx)){const a=1/cm,b=1/cx,q=a/(a+b);
+  mk.textContent='Casa sin margen: menos '+pc(q)+' · más '+pc(1-q)+' (margen '+Math.round(100*(a+b-1))+' %)'}else mk.textContent=''}
+function items(card){const r=[];card.querySelectorAll('.mb').forEach(mb=>{
+  const u=mb.querySelector('.lado[data-lado=under] input').value,o=mb.querySelector('.lado[data-lado=over] input').value;
+  if(u||o)r.push({proyeccion_id:Number(mb.dataset.id),cuota_menos:u,cuota_mas:o})});return r}
+function guardarCuotas(b){const card=b.closest('.card'),it=items(card);
+ if(!it.length){card.querySelector('.err').textContent='Ingresa al menos una cuota';return}
+ enviar('/api/cuotas',{items:it},b)}
+function apostar(b,lado){const card=b.closest('.card'),mb=b.closest('.mb'),l=mb.querySelector('.lado[data-lado='+lado+']');
+ const cuota=l.querySelector('input').value,v=num(cuota);
+ if(isNaN(v)){card.querySelector('.err').textContent='Ingresa la cuota de '+(lado==='under'?'menos':'más');return}
+ if(v<Number(l.dataset.min)&&!confirm('La cuota está bajo el mínimo. ¿Registrar igual?'))return;
+ enviar('/api/apostar',{proyeccion_id:Number(mb.dataset.id),lado:lado,cuota:cuota,
+  monto:card.querySelector('[name=monto]').value,items:items(card)},b)}
+async function enviar(url,datos,boton){boton.disabled=true;const card=boton.closest('.card');
+ const e=card?card.querySelector('.err'):null;if(e)e.textContent='';
  try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Senales':'1'},
    body:JSON.stringify(datos)});const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'error');location.reload()}
  catch(x){boton.disabled=false;if(e)e.textContent=x.message}}
-function apostar(b){const c=b.closest('.ap');const cuota=c.querySelector('[name=cuota]').value,monto=c.querySelector('[name=monto]').value;
- const v=num(cuota);if(isNaN(v)){c.querySelector('.err').textContent='Ingresa la cuota';return}
- if(v<Number(c.dataset.min)&&!confirm('La cuota está bajo el mínimo. ¿Registrar igual?'))return;
- enviar('/api/apostar',{proyeccion_id:Number(c.dataset.id),cuota:cuota,monto:monto},b)}
 function resultado(b,id,estado){enviar('/api/resultado',{apuesta_id:id,estado:estado},b)}
+document.addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.mb').forEach(actualizar));
 """
 
 
@@ -182,27 +215,123 @@ def botones_resultado(a: dict) -> str:
             f'<div class="err"></div>')
 
 
-def caja_apuesta(f: dict, apuesta: dict | None, monto_defecto: float) -> str:
-    if apuesta:
-        est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>',
-               "nula": '<span class="m">anulada</span>'}.get(apuesta["estado"], '<span class="m">pendiente</span>')
-        return (f'<div class="ap"><div class="m">Apostada a <b>{num(apuesta["cuota"])}</b> · '
-                f'{pesos(apuesta["monto"]).replace("+", "")}</div><div class="m">Resultado: {est}</div>'
-                f'<div>{botones_resultado(apuesta)}</div></div>')
-    return (f'<div class="ap" data-id="{f["id"]}" data-min="{f["desde"]:.2f}">'
-            f'<div class="m">apostar si paga <b class="cuota" style="font-size:15px">≥ {num(f["desde"])}</b></div>'
-            f'<div class="dos"><input name="cuota" inputmode="decimal" placeholder="cuota" autocomplete="off" '
-            f'oninput="veredicto(this)"><input name="monto" inputmode="numeric" value="{monto_defecto:.0f}" '
-            f'aria-label="monto"></div><div class="ver m">mín. {num(f["desde"])}</div>'
-            f'<button class="pri" onclick="apostar(this)">Apostar</button><div class="err"></div></div>')
-
-
-def apuestas_por_proyeccion(ids: list[int]) -> dict[int, dict]:
-    if not ids:
-        return {}
+def partidos_ventana(desde: date, hasta: date) -> dict[str, dict]:
+    # Todas las proyecciones (ambas caras, todas las líneas) agrupadas por partido.
     with db.conexion() as con:
-        filas = con.execute(f"SELECT * FROM apuestas WHERE proyeccion_id IN ({','.join('?' * len(ids))})", ids)
-        return {r["proyeccion_id"]: dict(r) for r in filas}
+        db.aplicar_parametros(con)
+        filas = [dict(r) for r in con.execute(
+            "SELECT * FROM proyecciones WHERE fecha BETWEEN ? AND ? ORDER BY id",
+            (desde.isoformat(), hasta.isoformat()))]
+        guardadas = reg_cuotas.ultimas(con, filas)
+        ids = sorted({f["partido_id"] for f in filas})
+        apuestas_l = {}
+        if ids:
+            for r in con.execute(f"SELECT * FROM apuestas WHERE partido_id IN ({','.join('?' * len(ids))})", ids):
+                apuestas_l[(r["partido_id"], r["mercado"])] = dict(r)
+    partidos = {}
+    for f in filas:
+        pt = partidos.setdefault(f["partido_id"], {
+            "id": f["partido_id"], "liga": f["liga"], "local": f["local"], "visita": f["visita"],
+            "arbitro": f["arbitro"], "inicio": hora_chile(f["fecha"], f["hora"]), "pendiente": False,
+            "mercados": {}, "candidatas": []})
+        pt["pendiente"] |= f["estado"] == "pendiente"
+        m = pt["mercados"].setdefault(f["mercado"], {})
+        ln = m.setdefault(f["linea"], {})
+        ln["id_" + f["lado"]] = f["id"]
+        if f["lado"] == "under":
+            ln["pu"] = f["prob"]
+        if f["tipo"] in ("candidata", "senal"):
+            pt["candidatas"].append(f)
+    for pt in partidos.values():
+        for merc, lineas in pt["mercados"].items():
+            for linea, ln in lineas.items():
+                if "pu" not in ln:  # solo existiera la cara 'over'
+                    continue
+                c = guardadas.get((pt["id"], merc, linea)) or {}
+                ln.update(cu=c.get("cuota_menos"), co=c.get("cuota_mas"))
+            pt.setdefault("apuestas", {})[merc] = apuestas_l.get((pt["id"], merc))
+    return partidos
+
+
+def linea_inicial(pt: dict, merc: str) -> float:
+    lineas = {l: d for l, d in pt["mercados"][merc].items() if "pu" in d}
+    ap = pt["apuestas"].get(merc)
+    if ap and ap["linea"] in lineas:
+        return ap["linea"]
+    cands = [c for c in pt["candidatas"] if c["mercado"] == merc]
+    foco = [c for c in cands if c["lado"] in config.LADOS_FOCO]
+    if foco or cands:
+        return max(foco or cands, key=lambda c: c["prob"])["linea"]
+    return min(lineas, key=lambda l: abs(lineas[l]["pu"] - 0.5))
+
+
+def bloque_mercado(pt: dict, merc: str) -> str:
+    lineas = {l: d for l, d in sorted(pt["mercados"][merc].items()) if "pu" in d}
+    if not lineas:
+        return ""
+    sel = linea_inicial(pt, merc)
+    cand_lineas = {c["linea"] for c in pt["candidatas"] if c["mercado"] == merc}
+    datos = {}
+    opciones = []
+    for l, d in lineas.items():
+        clave_l = f"{l:g}"
+        datos[clave_l] = {"id": d.get("id_under") or d.get("id_over"), "t": num(l, 1), "pu": round(d["pu"], 4),
+                          "mu": round(config.cuota_minima(d["pu"]), 3), "mo": round(config.cuota_minima(1 - d["pu"]), 3),
+                          "cu": num(d["cu"]) if d.get("cu") else "", "co": num(d["co"]) if d.get("co") else ""}
+        estrella = " ★" if l in cand_lineas else ""
+        opciones.append(f'<option value="{clave_l}"{" selected" if l == sel else ""}>{num(l, 1)}{estrella}</option>')
+    d = datos[f"{sel:g}"]
+    ap = pt["apuestas"].get(merc)
+    lados = []
+    for lado in ("under", "over"):
+        u = lado == "under"
+        boton = "" if ap else ('<button onclick="apostar(this,' + "'" + lado + "'" + f')">Apostar {LADO[lado].lower()}</button>')
+        lados.append(
+            f'<div class="lado" data-lado="{lado}" data-min="{d["mu"] if u else d["mo"]}">'
+            f'<div class="m"><b class="pl">{LADO[lado]} {d["t"]}</b> · <span class="pm">modelo {pct(d["pu"] if u else 1 - d["pu"])}</span></div>'
+            f'<input inputmode="decimal" placeholder="cuota" value="{d["cu"] if u else d["co"]}" autocomplete="off" '
+            f'oninput="actualizar(this.closest(' + "'.mb'" + '))">'
+            f'<div class="ver m"></div>{boton}</div>')
+    apuesta_html = ""
+    if ap:
+        est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>',
+               "nula": '<span class="m">anulada</span>'}.get(ap["estado"], '<span class="m">pendiente</span>')
+        apuesta_html = (f'<div style="margin-top:8px" class="m">Apostada: <b>{LADO[ap["lado"]]} {num(ap["linea"], 1)}</b> '
+                        f'a <b>{num(ap["cuota"])}</b> · {pesos(ap["monto"]).replace("+", "")} · {est}</div>'
+                        f'<div style="margin-top:6px">{botones_resultado(ap)}</div>')
+    principal = " ★" if merc == config.MERCADO_PRINCIPAL else ""
+    lineas_json = escape(json.dumps(datos, ensure_ascii=False))
+    return (f'<div class="mb" data-mercado="{merc}" data-id="{d["id"]}" data-lineas="{lineas_json}">'
+            f'<div class="cab"><b>{MERCADO[merc]}{principal}</b><label class="m">línea '
+            f'<select onchange="cambiarLinea(this)">{"".join(opciones)}</select></label></div>'
+            f'<div class="cuo">{"".join(lados)}</div><div class="mk"></div>{apuesta_html}</div>')
+
+
+def tarjeta_partido(pt: dict, monto_defecto: float) -> str:
+    arb = f' · árb. {escape(pt["arbitro"])}' if pt.get("arbitro") else ""
+    badges = "".join(
+        f'<span class="badge">★ {LADO[c["lado"]].lower()} {num(c["linea"], 1)} {MERCADO[c["mercado"]].lower()} · {pct(c["prob"])}</span>'
+        for c in sorted(pt["candidatas"], key=lambda c: -c["prob"])
+        if c["mercado"] == config.MERCADO_PRINCIPAL and c["lado"] in config.LADOS_FOCO)
+    bloques = "".join(bloque_mercado(pt, m) for m in ("tarjetas", "corners", "goles") if m in pt["mercados"])
+    return (f'<div class="card"><div class="p">{escape(pt["local"])} – {escape(pt["visita"])}</div>'
+            f'<div class="m">{pt["inicio"]:%d-%m %H:%M} · {NOMBRE_LIGA.get(pt["liga"], pt["liga"])}{arb}</div>'
+            f'<div>{badges}</div>{bloques}'
+            f'<div class="pie"><input name="monto" inputmode="numeric" value="{monto_defecto:.0f}" aria-label="monto">'
+            f'<button class="pri" onclick="guardarCuotas(this)">Guardar cuotas</button></div><div class="err"></div></div>')
+
+
+def apuestas_por_linea(filas_p: list[dict]) -> dict[tuple, dict]:
+    if not filas_p:
+        return {}
+    ids = sorted({f["partido_id"] for f in filas_p})
+    with db.conexion() as con:
+        filas = con.execute(f"SELECT * FROM apuestas WHERE partido_id IN ({','.join('?' * len(ids))})", ids)
+        return {(r["partido_id"], r["mercado"], r["linea"]): dict(r) for r in filas}
+
+
+def clave(f: dict) -> tuple:
+    return (f["partido_id"], f["mercado"], f["linea"])
 
 
 def tarjeta_candidata(f: dict, con_resultado: bool = False, apuesta: dict | None = None,
@@ -216,8 +345,6 @@ def tarjeta_candidata(f: dict, con_resultado: bool = False, apuesta: dict | None
             der = f'<span class="big no">✗</span><div class="m">hubo {num(f["valor_real"], 0)}</div>'
         else:
             der = '<span class="tag">anulada</span>'
-    elif con_apuesta:
-        der = caja_apuesta(f, apuesta, monto_defecto)
     else:
         der = f'<div class="m">apostar si paga</div><div class="cuota">≥ {num(f["desde"])}</div>'
     return f"""<div class="card"><div class="fila"><div>
@@ -230,35 +357,40 @@ def tarjeta_candidata(f: dict, con_resultado: bool = False, apuesta: dict | None
 # ------------------------------------------------------------------ pantallas
 async def hoy(request):
     todas = request.query_params.get("todas") == "1"
-    mercado = mercado_pedido(request)
     ahora = datetime.now(TZ_CL)
-    filas = candidatas(ahora.date() - timedelta(days=1), ahora.date() + timedelta(days=2),
-                       ("pendiente", "acertada", "fallada", "nula"))
-    apostadas = apuestas_por_proyeccion([f["id"] for f in filas])
-    filas = [f for f in filas if (f["id"] in apostadas and f["mercado"] == mercado) or f in filtro_foco([f], todas, mercado)]
-    filas = [f for f in filas if f["inicio"].date() <= ahora.date() + timedelta(days=1) and (
-        (f["estado"] == "pendiente" and f["inicio"] >= ahora - timedelta(minutes=15))
-        or (f["id"] in apostadas and f["inicio"].date() == ahora.date()))]
-    filas.sort(key=lambda f: (f["inicio"], -f["prob"]))
+    partidos = partidos_ventana(ahora.date() - timedelta(days=1), ahora.date() + timedelta(days=2))
+    lista = []
+    for pt in partidos.values():
+        if not todas and pt["liga"] in config.LIGAS_EXCLUIDAS:
+            continue
+        if pt["inicio"].date() > ahora.date() + timedelta(days=1):
+            continue
+        con_apuesta = any(pt["apuestas"].values())
+        vigente = pt["pendiente"] and pt["inicio"] >= ahora - timedelta(minutes=15)
+        if vigente or (con_apuesta and pt["inicio"].date() == ahora.date()):
+            lista.append(pt)
+    # primero los que tienen candidatas de tu foco, luego por hora
+    lista.sort(key=lambda pt: pt["inicio"])
     monto_defecto = reg_apuestas.ultimo_monto()
-    cambiar = (f'<a class="sw" href="/?mercado={mercado}">Ver solo mi foco</a>' if todas
-               else f'<a class="sw" href="/?mercado={mercado}&todas=1">Ver todas las candidatas</a>')
-    cuerpo = [selector_mercado("/", mercado, todas),
-              f'<p class="nota">{"Todas las candidatas de " + MERCADO[mercado].lower() if todas else "Foco: " + descripcion_foco(mercado)}. '
-              f'Horas de Chile. {cambiar}</p>']
-    if not filas:
-        cuerpo.append('<div class="card">No hay candidatas pendientes para hoy ni mañana.</div>')
+    excl = ", ".join(NOMBRE_LIGA.get(l, l) for l in config.LIGAS_EXCLUIDAS) or "ninguna"
+    cambiar = ('<a class="sw" href="/">Ocultar ligas excluidas</a>' if todas
+               else f'<a class="sw" href="/?todas=1">Ver también {excl}</a>')
+    cuerpo = [f'<p class="nota">Horas de Chile. ★ = candidata del modelo (tu foco: {MERCADO[config.MERCADO_PRINCIPAL].lower()}, '
+              f'{" y ".join(LADO[l].lower() for l in config.LADOS_FOCO)}). Piso de cuota {num(config.CUOTA_PISO)}. {cambiar}</p>']
+    if not lista:
+        cuerpo.append('<div class="card">No hay partidos pendientes para hoy ni mañana.</div>')
     dia_actual = None
-    for f in filas:
-        if f["inicio"].date() != dia_actual:
-            dia_actual = f["inicio"].date()
+    for pt in lista:
+        if pt["inicio"].date() != dia_actual:
+            dia_actual = pt["inicio"].date()
             nombre = "Hoy" if dia_actual == ahora.date() else "Mañana"
             cuerpo.append(f"<h2>{nombre} · {dia_actual:%d-%m}</h2>")
-        cuerpo.append(tarjeta_candidata(f, apuesta=apostadas.get(f["id"]), monto_defecto=monto_defecto,
-                                        con_apuesta=True))
-    cuerpo.append('<p class="nota">Escribe la cuota que ofrece la casa: te dice al tiro si conviene. '
-                  '"Apostar" la registra con ese monto. El resultado se cierra solo con los datos oficiales; '
-                  'si lo marcas a mano, manda el tuyo. Si la casa ofrece otra línea, pídele el cálculo a Claude.</p>')
+        cuerpo.append(tarjeta_partido(pt, monto_defecto))
+    cuerpo.append('<p class="nota">Elige la línea que ofrece la casa en cada mercado y escribe sus cuotas de '
+                  '"menos" y "más": te dice en qué lado conviene y cuánto cree la casa sin su margen. '
+                  '"Guardar cuotas" registra todo el partido aunque no apuestes (así se mide si el modelo le gana '
+                  'al mercado). "Apostar" registra la apuesta en ese lado con el monto de abajo. El resultado se '
+                  'cierra solo; si lo marcas a mano, manda el tuyo.</p>')
     return pagina("Hoy", "hoy", "".join(cuerpo))
 
 
@@ -277,6 +409,56 @@ def bloque_resumen(filas: list[dict], titulo: str) -> str:
 <div><div class="m">Diferencia</div><div class="big {clase}">{r["diferencia_puntos"]:+.1f} pts</div></div>
 <div><div class="m">Prob. de ser suerte</div><div class="big">{pct(r["prob_de_ser_suerte"])}</div></div>
 </div>"""
+
+
+def bloque_cuotas_reales(desde: date, hasta: date, mercado: str, todas: bool) -> str:
+    # Simula 1 unidad a la última cuota guardada de cada línea jugada: (a) los lados que convenían,
+    # (b) siempre el lado del foco. Incluye todas las líneas con cuotas, sean o no candidatas.
+    with db.conexion() as con:
+        db.aplicar_parametros(con)
+        filas = [dict(r) for r in con.execute(
+            "SELECT p.*, c.cuota_menos, c.cuota_mas FROM cuotas_casa c JOIN proyecciones p ON p.id = c.proyeccion_id "
+            "WHERE c.id IN (SELECT MAX(id) FROM cuotas_casa GROUP BY partido_id, mercado, linea) "
+            "AND p.mercado = ? AND p.fecha BETWEEN ? AND ? AND p.estado IN ('acertada','fallada')",
+            (mercado, desde.isoformat(), hasta.isoformat()))]
+    if not todas:
+        filas = [f for f in filas if f["liga"] not in config.LIGAS_EXCLUIDAS]
+    if not filas:
+        return ('<h2>A cuotas reales de la casa</h2><p class="nota">Aún no hay partidos jugados con cuotas guardadas '
+                'en este mercado. Usa "Guardar cuotas" en Hoy para empezar a medir contra el mercado.</p>')
+    conv, foco, brechas = [], [], []
+    for f in filas:
+        gana_lado = f["estado"] == "acertada"
+        sale_menos = gana_lado if f["lado"] == "under" else not gana_lado
+        p_menos = reg_cuotas.prob_menos(f)
+        ev = reg_cuotas.evaluar(p_menos, f["cuota_menos"], f["cuota_mas"])
+        for lado, gana in (("under", sale_menos), ("over", not sale_menos)):
+            cuota = ev[lado]["cuota"]
+            if cuota and ev[lado]["conviene"]:
+                conv.append((gana, cuota))
+            if cuota and lado in config.LADOS_FOCO:
+                foco.append((gana, cuota))
+        if "prob_casa_sin_margen" in ev["under"]:
+            brechas.append(p_menos - ev["under"]["prob_casa_sin_margen"])
+
+    def fila(nombre, apuestas):
+        if not apuestas:
+            return f'<tr><td>{nombre}</td><td class="r">0</td><td class="r">—</td><td class="r">—</td></tr>'
+        g = sum((c - 1) if w else -1 for w, c in apuestas)
+        ac = sum(w for w, _ in apuestas) / len(apuestas)
+        clase = "ok" if g >= 0 else "no"
+        return (f'<tr><td>{nombre}</td><td class="r">{len(apuestas)}</td><td class="r">{pct(ac)}</td>'
+                f'<td class="r {clase}">{100 * g / len(apuestas):+.1f} %</td></tr>')
+    brecha = ""
+    if brechas:
+        m = sum(brechas) / len(brechas)
+        brecha = (f'<p class="nota">En {len(brechas)} líneas con ambas cuotas, el modelo dio en promedio '
+                  f'{abs(100 * m):.1f} puntos {"más" if m > 0 else "menos"} de probabilidad al "menos" que la casa.</p>')
+    lados_txt = " y ".join(LADO[l].lower() for l in config.LADOS_FOCO)
+    return (f'<h2>A cuotas reales de la casa</h2><p class="nota">{len(filas)} líneas jugadas con cuotas guardadas. '
+            'Simula 1 unidad por apuesta a la última cuota guardada.</p>'
+            '<table><tr><th>Estrategia</th><th class="r">Apuestas</th><th class="r">Acierto</th><th class="r">ROI</th></tr>'
+            + fila("Solo los lados que convenían", conv) + fila(f"Siempre {lados_txt}", foco) + "</table>" + brecha)
 
 
 async def resultados(request):
@@ -320,6 +502,7 @@ async def resultados(request):
                                   f'<td class="r">{pct(ac / len(dec))}</td><td class="r">{pct(mn)}</td></tr>')
             cuerpo.append('<h2>Por liga</h2><table><tr><th>Liga</th><th class="r">Aciertos</th>'
                           '<th class="r">Acierto</th><th class="r">Mínimo</th></tr>' + "".join(filas_liga) + "</table>")
+    cuerpo.append(bloque_cuotas_reales(hoy_cl - timedelta(days=dias), hoy_cl, mercado, todas))
     if pend:
         cuerpo.append(f'<p class="nota">{len(pend)} candidatas ya jugadas esperan el resultado oficial.</p>')
     if filas:
@@ -378,15 +561,41 @@ def _origen_valido(request: Request) -> bool:
     return True
 
 
+def _guardar_items(d: dict) -> list[dict]:
+    items = d.get("items")
+    if items is None and d.get("proyeccion_id") is not None:
+        items = [d]
+    salida = []
+    for it in items or []:
+        if it.get("cuota_menos") or it.get("cuota_mas"):
+            salida.append(reg_cuotas.guardar(int(it["proyeccion_id"]), it.get("cuota_menos"), it.get("cuota_mas"),
+                                             casa="panel"))
+    return salida
+
+
 async def api_apostar(request: Request):
     if not _origen_valido(request):
         return JSONResponse({"error": "solicitud no permitida"}, status_code=403)
     try:
         d = await request.json()
-        r = reg_apuestas.registrar(d.get("cuota"), d.get("monto"), int(d.get("proyeccion_id")), casa="panel")
-    except (ValueError, TypeError) as e:
+        _guardar_items({"items": d.get("items") or []})
+        r = reg_apuestas.registrar(d.get("cuota"), d.get("monto"), int(d.get("proyeccion_id")), casa="panel",
+                                   lado=d.get("lado"))
+    except (ValueError, TypeError, KeyError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse(r)
+
+
+async def api_cuotas(request: Request):
+    if not _origen_valido(request):
+        return JSONResponse({"error": "solicitud no permitida"}, status_code=403)
+    try:
+        r = _guardar_items(await request.json())
+        if not r:
+            raise ValueError("ingresa al menos una cuota")
+    except (ValueError, TypeError, KeyError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"ok": True, "guardadas": len(r), "detalle": r})
 
 
 async def api_resultado(request: Request):
@@ -431,6 +640,7 @@ class Autenticacion(BaseHTTPMiddleware):
 def crear_app() -> Starlette:
     return Starlette(routes=[Route("/", hoy), Route("/resultados", resultados), Route("/apuestas", apuestas),
                              Route("/api/apostar", api_apostar, methods=["POST"]),
+                             Route("/api/cuotas", api_cuotas, methods=["POST"]),
                              Route("/api/resultado", api_resultado, methods=["POST"]),
                              Route("/salud", salud)],
                      middleware=[Middleware(Autenticacion)])
