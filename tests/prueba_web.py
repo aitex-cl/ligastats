@@ -28,6 +28,10 @@ filas = [
      "under", 4.1, 0.70, 1.43, 1.50, "candidata", "v1.1", "t"),
     ("D1|y|Bayern|Mainz", "D1", ayer.isoformat(), "15:00", "Bayern", "Mainz", None, "tarjetas", 4.5,
      "under", 3.6, 0.68, 1.47, 1.54, "candidata", "v1.1", "t"),
+    ("F1|x|Lyon|Nantes", "F1", hoy.isoformat(), "23:59", "Lyon", "Nantes", None, "corners", 9.5,
+     "under", 8.9, 0.61, 1.64, 1.72, "candidata", "v1.1", "t"),
+    ("I1|x|Roma|Torino", "I1", hoy.isoformat(), "23:59", "Roma", "Torino", None, "goles", 2.5,
+     "under", 2.3, 0.60, 1.67, 1.75, "candidata", "v1.1", "t"),
 ]
 for f in filas:
     con.execute(f"INSERT INTO proyecciones ({campos}) VALUES ({','.join('?' * 17)})", f)
@@ -69,6 +73,10 @@ try:
     chequear("Ajax" not in r.text, "Hoy oculta Holanda (fuera del foco)")
     chequear("≥ 1,70" in r.text, "aplica el piso de cuota 1,70")
     chequear("Ajax" in httpx.get(base + "/?todas=1", headers=auth).text, "Ver todas incluye Holanda")
+    chequear("Lyon" not in r.text and "Roma" not in r.text, "Hoy (tarjetas) no mezcla corners ni goles")
+    r2 = httpx.get(base + "/?mercado=corners", headers=auth)
+    chequear("Lyon" in r2.text and "En observación" in r2.text, "pestaña Corners muestra corners en observación")
+    chequear("Roma" in httpx.get(base + "/?mercado=goles", headers=auth).text, "pestaña Goles muestra goles")
     r = httpx.get(base + "/resultados", headers=auth)
     chequear(r.status_code == 200 and "1 de 2" in r.text, "Resultados: 1 de 2 acertadas")
     chequear("59 %" in r.text, "mínimo para no perder con cuota 1,70 (59 %)")
