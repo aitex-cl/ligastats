@@ -256,12 +256,17 @@ def partidos_ventana(desde: date, hasta: date) -> dict[str, dict]:
         if f["tipo"] in ("candidata", "senal"):
             pt["candidatas"].append(f)
     for pt in partidos.values():
+        pt["linea_guardada"] = {}
         for merc, lineas in pt["mercados"].items():
+            ultimo_id = 0
             for linea, ln in lineas.items():
                 if "pu" not in ln:  # solo existiera la cara 'over'
                     continue
                 c = guardadas.get((pt["id"], merc, linea)) or {}
                 ln.update(cu=c.get("cuota_menos"), co=c.get("cuota_mas"))
+                if c and c["id"] > ultimo_id:  # la línea guardada más recientemente
+                    ultimo_id = c["id"]
+                    pt["linea_guardada"][merc] = linea
             pt.setdefault("apuestas", {})[merc] = apuestas_l.get((pt["id"], merc))
     return partidos
 
@@ -271,6 +276,9 @@ def linea_inicial(pt: dict, merc: str) -> float:
     ap = pt["apuestas"].get(merc)
     if ap and ap["linea"] in lineas:
         return ap["linea"]
+    guardada = pt.get("linea_guardada", {}).get(merc)
+    if guardada in lineas:
+        return guardada
     cands = [c for c in pt["candidatas"] if c["mercado"] == merc]
     foco = [c for c in cands if c["lado"] in config.LADOS_FOCO]
     if foco or cands:
