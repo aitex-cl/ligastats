@@ -18,7 +18,7 @@ from mcp.types import ToolAnnotations
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from . import apuestas, backtest, cargar, config, db, rendimiento, senales
+from . import apuestas, backtest, cargar, config, cuotas, db, rendimiento, senales
 
 LECTURA = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 ESCRITURA = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
@@ -217,12 +217,25 @@ def registrar_apuesta(cuota: float, monto: float, proyeccion_id: int | None = No
                       visita: str | None = None, mercado: Literal["goles", "tarjetas", "corners"] | None = None,
                       linea: float | None = None, lado: Literal["over", "under"] | None = None,
                       casa: str | None = None, nota: str | None = None) -> dict:
-    """Registra una apuesta hecha. Lo normal es pasar proyeccion_id (de senales_proximas); si la apuesta
-    no viene de una proyección, indicar liga, fecha, local, visita, mercado, linea y lado.
+    """Registra una apuesta hecha. Lo normal es pasar proyeccion_id (de senales_proximas); con 'lado' se
+    puede apostar el lado contrario de esa misma línea. Si la apuesta no viene de una proyección, indicar
+    liga, fecha, local, visita, mercado, linea y lado. Una sola apuesta por línea.
     Los datos de la apuesta no se pueden modificar después."""
     try:
-        return apuestas.registrar(cuota, monto, proyeccion_id, casa, nota, liga=liga, fecha=fecha, local=local,
-                                  visita=visita, mercado=mercado, linea=linea, lado=lado)
+        return apuestas.registrar(cuota, monto, proyeccion_id, casa, nota, lado=lado, liga=liga, fecha=fecha,
+                                  local=local, visita=visita, mercado=mercado, linea=linea)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool(annotations=ESCRITURA)
+def guardar_cuotas(proyeccion_id: int, cuota_menos: float | None = None, cuota_mas: float | None = None,
+                   casa: str | None = None) -> dict:
+    """Guarda las cuotas reales de la casa para la línea de una proyección (menos y/o más) y devuelve
+    en qué lado hay valor: probabilidad del modelo, de la casa sin margen, cuota mínima y valor esperado.
+    Sirve aunque no se apueste: con estas cuotas se mide si el modelo le gana al mercado."""
+    try:
+        return cuotas.guardar(proyeccion_id, cuota_menos, cuota_mas, casa)
     except ValueError as e:
         return {"error": str(e)}
 

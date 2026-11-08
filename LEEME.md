@@ -79,6 +79,9 @@ Muestra tres valores para cargar en GitHub (Settings → Secrets and variables �
 - **Resultados:** candidatas ya jugadas, acertadas o falladas, con acierto contra el mínimo exigido
   y probabilidad de que sea suerte; por liga y en detalle.
 - **Mis apuestas:** apuestas registradas, resultado, acierto y CLV.
-- En cada candidata de **Hoy**: campo de cuota (indica al tiro si conviene), monto y botón **Apostar**.
-  Ya registrada, botones **Ganada / Perdida / Anulada** (también en Mis apuestas). El resultado manual
-  manda sobre el cierre automático.
+- **Hoy:** una tarjeta por partido con tres bloques (Tarjetas, Corners, Goles). En cada uno: selector de
+  línea (★ = candidata), cuotas de la casa para "menos" y "más", veredicto por lado y probabilidad de la casa
+  sin margen. **Guardar cuotas** registra todo el partido aunque no se apueste; **Apostar menos/más** registra
+  la apuesta. Luego, botones **Ganada / Perdida / Anulada** (también en Mis apuestas); el resultado manual manda.
+- **Resultados → A cuotas reales de la casa:** simula 1 unidad por línea jugada con cuotas guardadas
+  (solo lados que convenían / siempre el lado del foco) y compara modelo vs. casa sin margen.

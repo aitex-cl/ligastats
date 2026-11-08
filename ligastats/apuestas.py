@@ -17,9 +17,10 @@ def _numero(valor, nombre: str, minimo: float, maximo: float) -> float:
 
 
 def registrar(cuota, monto, proyeccion_id: int | None = None, casa: str | None = None, nota: str | None = None,
-              **manual) -> dict:
-    """Registra una apuesta. Con proyeccion_id toma los datos del partido de la proyección;
-    sin ella requiere liga, fecha, local, visita, mercado, linea y lado."""
+              lado: str | None = None, **manual) -> dict:
+    """Registra una apuesta. Con proyeccion_id toma los datos del partido de la proyección (y con
+    'lado' puede apostarse el lado contrario de la misma línea); sin ella requiere liga, fecha,
+    local, visita, mercado, linea y lado."""
     cuota = _numero(cuota, "La cuota", 1.01, 100)
     monto = _numero(monto, "El monto", 100, 10_000_000)
     with db.conexion() as con:
@@ -27,11 +28,17 @@ def registrar(cuota, monto, proyeccion_id: int | None = None, casa: str | None =
             p = con.execute("SELECT * FROM proyecciones WHERE id = ?", (int(proyeccion_id),)).fetchone()
             if not p:
                 raise ValueError(f"no existe la proyección {proyeccion_id}")
-            ya = con.execute("SELECT id FROM apuestas WHERE proyeccion_id = ?", (p["id"],)).fetchone()
+            if lado and lado != p["lado"]:
+                from .cuotas import hermana
+                p = hermana(con, p, lado)
+            ya = con.execute("SELECT id FROM apuestas WHERE partido_id = ? AND mercado = ? AND linea = ?",
+                             (p["partido_id"], p["mercado"], p["linea"])).fetchone()
             if ya:
-                raise ValueError(f"esa candidata ya tiene una apuesta registrada (#{ya['id']})")
+                raise ValueError(f"esa línea ya tiene una apuesta registrada (#{ya['id']})")
+            proyeccion_id = p["id"]
             datos = {k: p[k] for k in ("partido_id", "liga", "fecha", "local", "visita", "mercado", "linea", "lado")}
         else:
+            manual["lado"] = lado
             faltan = [k for k in ("liga", "fecha", "local", "visita", "mercado", "linea", "lado") if manual.get(k) is None]
             if faltan:
                 raise ValueError("faltan datos: " + ", ".join(faltan))

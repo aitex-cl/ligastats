@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from . import config, db
-from .modelo import ajustar_liga, prob_sin_margen, valor_real
+from .modelo import ajustar_liga, prob_sin_margen
 from .rendimiento import calibracion, resumen_prob
 
 log = logging.getLogger(__name__)
