@@ -105,6 +105,10 @@ def candidatas(desde: date, hasta: date, estados: tuple[str, ...]) -> list[dict]
         filas = [dict(r) for r in con.execute(
             f"SELECT * FROM proyecciones WHERE tipo IN ('candidata','senal') AND estado IN ({q}) "
             f"AND fecha BETWEEN ? AND ?", (*estados, desde.isoformat(), hasta.isoformat()))]
+    unicas = {}
+    for f in sorted(filas, key=lambda f: f["id"]):  # si hay varias versiones del modelo, queda la última
+        unicas[(f["partido_id"], f["mercado"], f["linea"], f["lado"])] = f
+    filas = list(unicas.values())
     for f in filas:
         f["inicio"] = hora_chile(f["fecha"], f["hora"])
         f["desde"] = apostar_desde(f["cuota_minima"])
@@ -120,7 +124,7 @@ header{position:sticky;top:0;background:var(--f);border-bottom:1px solid var(--b
 header b{font-size:16px}nav{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 nav a{padding:6px 12px;border-radius:999px;border:1px solid var(--b);color:var(--t);text-decoration:none;font-size:14px}
 nav a.on{background:var(--t);color:var(--f);border-color:var(--t)}
-main{max-width:760px;margin:0 auto;padding:12px 14px 40px}
+main{max-width:760px;margin:0 auto;padding:12px 14px 40px}main.ancho{max-width:1320px}
 h2{font-size:15px;margin:22px 0 8px;color:var(--s);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .card{border:1px solid var(--b);border-radius:12px;padding:12px;margin:8px 0;background:var(--c)}
 .fila{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
@@ -148,8 +152,17 @@ button.pri{background:var(--a);border-color:var(--a);color:#fff;font-weight:600}
 .lado.cand{border-color:var(--a)}
 .pie{display:flex;gap:8px;align-items:center;margin-top:8px}.pie input{width:110px;flex:0 0 auto}.pie button{flex:1}
 .mk{font-size:12px;color:var(--s);margin-top:4px}
-.mb{margin-top:12px;padding-top:10px;border-top:1px dashed var(--b)}
-.mb .cab{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tres{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+@media(max-width:820px){.tres{grid-template-columns:1fr}}
+.mb{border:1px solid var(--b);border-radius:10px;padding:10px;background:var(--f)}
+.mb .cab{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
+.mb .lado{display:grid;grid-template-columns:minmax(0,1fr) 84px auto;gap:6px;align-items:center;padding:5px 0;border:0;background:none;border-radius:0}
+.mb .lado+.lado{border-top:1px solid var(--b)}
+.mb .lado input{padding:6px 8px;font-size:15px}
+.mb .lado button{padding:6px 9px;font-size:13px}
+.mb .info{font-size:13px;line-height:1.3}.mb .ver{font-size:12px;min-height:0}
+.enc{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.enc .pie{margin-top:0}.enc .pie input{width:96px}
 .mb select{font:inherit;font-size:15px;padding:5px 8px;border:1px solid var(--b);border-radius:8px;background:var(--f);color:var(--t)}
 .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--a);color:#fff;margin:4px 4px 0 0}
 """
@@ -162,7 +175,7 @@ function pc(x){return Math.round(100*x)+' %'}
 function lineaActual(mb){const L=JSON.parse(mb.dataset.lineas);return L[mb.querySelector('select').value]}
 function cambiarLinea(sel){const mb=sel.closest('.mb'),d=lineaActual(mb);mb.dataset.id=d.id;
  mb.querySelectorAll('.lado').forEach(l=>{const u=l.dataset.lado==='under';l.dataset.min=u?d.mu:d.mo;
-  l.querySelector('.pl').textContent=(u?'Menos ':'Más ')+d.t;l.querySelector('.pm').textContent='modelo '+pc(u?d.pu:1-d.pu);
+  l.querySelector('.pl').textContent=(u?'Menos ':'Más ')+d.t;l.querySelector('.pm').textContent=pc(u?d.pu:1-d.pu);
   l.querySelector('input').value=(u?d.cu:d.co)||''});actualizar(mb)}
 function actualizar(mb){let cm=NaN,cx=NaN;
  mb.querySelectorAll('.lado').forEach(l=>{const v=num(l.querySelector('input').value),min=Number(l.dataset.min),o=l.querySelector('.ver');
@@ -194,7 +207,7 @@ document.addEventListener('DOMContentLoaded',()=>document.querySelectorAll('.mb'
 """
 
 
-def pagina(titulo: str, activa: str, cuerpo: str) -> HTMLResponse:
+def pagina(titulo: str, activa: str, cuerpo: str, ancho: bool = False) -> HTMLResponse:
     enlaces = "".join(
         f'<a href="{u}" class="{"on" if k == activa else ""}">{t}</a>'
         for k, u, t in (("hoy", "/", "Hoy"), ("res", "/resultados", "Resultados"), ("ap", "/apuestas", "Mis apuestas")))
@@ -202,7 +215,7 @@ def pagina(titulo: str, activa: str, cuerpo: str) -> HTMLResponse:
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
 <title>{escape(titulo)}</title><style>{CSS}</style></head><body>
 <header><b>Señales</b> <span class="m">· {datetime.now(TZ_CL):%d-%m %H:%M}</span><nav>{enlaces}</nav></header>
-<main>{cuerpo}</main><script>{JS}</script></body></html>"""
+<main{' class="ancho"' if ancho else ''}>{cuerpo}</main><script>{JS}</script></body></html>"""
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
@@ -285,13 +298,13 @@ def bloque_mercado(pt: dict, merc: str) -> str:
     lados = []
     for lado in ("under", "over"):
         u = lado == "under"
-        boton = "" if ap else ('<button onclick="apostar(this,' + "'" + lado + "'" + f')">Apostar {LADO[lado].lower()}</button>')
+        boton = "" if ap else ('<button onclick="apostar(this,' + "'" + lado + "'" + ')">Apostar</button>')
         lados.append(
             f'<div class="lado" data-lado="{lado}" data-min="{d["mu"] if u else d["mo"]}">'
-            f'<div class="m"><b class="pl">{LADO[lado]} {d["t"]}</b> · <span class="pm">modelo {pct(d["pu"] if u else 1 - d["pu"])}</span></div>'
+            f'<div class="info"><b class="pl">{LADO[lado]} {d["t"]}</b> · <span class="pm">{pct(d["pu"] if u else 1 - d["pu"])}</span>'
+            f'<div class="ver m"></div></div>'
             f'<input inputmode="decimal" placeholder="cuota" value="{d["cu"] if u else d["co"]}" autocomplete="off" '
-            f'oninput="actualizar(this.closest(' + "'.mb'" + '))">'
-            f'<div class="ver m"></div>{boton}</div>')
+            f'oninput="actualizar(this.closest(' + "'.mb'" + f'))">{boton}</div>')
     apuesta_html = ""
     if ap:
         est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>',
@@ -304,21 +317,23 @@ def bloque_mercado(pt: dict, merc: str) -> str:
     return (f'<div class="mb" data-mercado="{merc}" data-id="{d["id"]}" data-lineas="{lineas_json}">'
             f'<div class="cab"><b>{MERCADO[merc]}{principal}</b><label class="m">línea '
             f'<select onchange="cambiarLinea(this)">{"".join(opciones)}</select></label></div>'
-            f'<div class="cuo">{"".join(lados)}</div><div class="mk"></div>{apuesta_html}</div>')
+            f'{"".join(lados)}<div class="mk"></div>{apuesta_html}</div>')
 
 
 def tarjeta_partido(pt: dict, monto_defecto: float) -> str:
     arb = f' · árb. {escape(pt["arbitro"])}' if pt.get("arbitro") else ""
+    unicas = {(c["mercado"], c["linea"], c["lado"]): c for c in pt["candidatas"]}.values()
     badges = "".join(
         f'<span class="badge">★ {LADO[c["lado"]].lower()} {num(c["linea"], 1)} {MERCADO[c["mercado"]].lower()} · {pct(c["prob"])}</span>'
-        for c in sorted(pt["candidatas"], key=lambda c: -c["prob"])
+        for c in sorted(unicas, key=lambda c: -c["prob"])
         if c["mercado"] == config.MERCADO_PRINCIPAL and c["lado"] in config.LADOS_FOCO)
     bloques = "".join(bloque_mercado(pt, m) for m in ("tarjetas", "corners", "goles") if m in pt["mercados"])
-    return (f'<div class="card"><div class="p">{escape(pt["local"])} – {escape(pt["visita"])}</div>'
+    return (f'<div class="card"><div class="enc"><div><div class="p">{escape(pt["local"])} – {escape(pt["visita"])}</div>'
             f'<div class="m">{pt["inicio"]:%d-%m %H:%M} · {NOMBRE_LIGA.get(pt["liga"], pt["liga"])}{arb}</div>'
-            f'<div>{badges}</div>{bloques}'
-            f'<div class="pie"><input name="monto" inputmode="numeric" value="{monto_defecto:.0f}" aria-label="monto">'
-            f'<button class="pri" onclick="guardarCuotas(this)">Guardar cuotas</button></div><div class="err"></div></div>')
+            f'<div>{badges}</div></div>'
+            f'<div class="pie"><input name="monto" inputmode="numeric" value="{monto_defecto:.0f}" aria-label="monto" title="monto">'
+            f'<button class="pri" onclick="guardarCuotas(this)">Guardar cuotas</button></div></div>'
+            f'<div class="tres">{bloques}</div><div class="err"></div></div>')
 
 
 def apuestas_por_linea(filas_p: list[dict]) -> dict[tuple, dict]:
@@ -391,7 +406,7 @@ async def hoy(request):
                   '"Guardar cuotas" registra todo el partido aunque no apuestes (así se mide si el modelo le gana '
                   'al mercado). "Apostar" registra la apuesta en ese lado con el monto de abajo. El resultado se '
                   'cierra solo; si lo marcas a mano, manda el tuyo.</p>')
-    return pagina("Hoy", "hoy", "".join(cuerpo))
+    return pagina("Hoy", "hoy", "".join(cuerpo), ancho=True)
 
 
 def bloque_resumen(filas: list[dict], titulo: str) -> str:
