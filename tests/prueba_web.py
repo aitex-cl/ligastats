@@ -78,8 +78,10 @@ try:
     chequear("Lyon" in r.text and "Roma" in r.text, "partidos con candidatas de corners y goles también aparecen")
     chequear('data-min="1.7"' in r.text, "aplica el piso de cuota 1,70")
     chequear(r.text.count('class="mb"') >= 3 and "<select" in r.text, "bloques por mercado con selector de línea")
-    chequear("Guardar cuotas" in r.text and "Apostar menos" in r.text and "Apostar más" in r.text, "botones presentes")
-    m = re.search(r'class="card"><div class="p">Arsenal.*?class="mb" data-mercado="tarjetas" data-id="(\d+)"', r.text, re.S)
+    chequear("Guardar cuotas" in r.text and "apostar(this,'under')" in r.text and "apostar(this,'over')" in r.text,
+             "botones presentes")
+    chequear('class="tres"' in r.text and 'class="ancho"' in r.text, "tres columnas y pantalla ancha")
+    m = re.search(r'<div class="p">Arsenal.*?class="mb" data-mercado="tarjetas" data-id="(\d+)"', r.text, re.S)
     pid = int(m.group(1))
     api = {**auth, "Content-Type": "application/json"}
     ok_h = {**api, "X-Senales": "1"}
