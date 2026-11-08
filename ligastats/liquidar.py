@@ -79,7 +79,8 @@ def liquidar(hoy: date | None = None) -> dict:
             else:
                 estado, ganancia = "perdida", -a["monto"]
             con.execute(
-                "UPDATE apuestas SET estado=?, ganancia=?, cuota_cierre=?, clv=?, liquidado_en=? WHERE id=?",
+                "UPDATE apuestas SET estado=?, ganancia=?, cuota_cierre=?, clv=?, liquidado_en=?, "
+                "liquidado_por='auto' WHERE id=? AND estado='pendiente'",
                 (estado, ganancia, cierre, clv, db.ahora(), a["id"]))
             resumen["apuestas_liquidadas"] += 1
     return resumen

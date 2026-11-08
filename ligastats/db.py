@@ -172,9 +172,18 @@ def conectar(ruta=None) -> sqlite3.Connection:
     return con
 
 
+MIGRACIONES = [
+    ("apuestas", "liquidado_por", "ALTER TABLE apuestas ADD COLUMN liquidado_por TEXT"),  # auto | manual
+]
+
+
 def inicializar(ruta=None) -> None:
     with conectar(ruta) as con:
         con.executescript(ESQUEMA)
+        for tabla, columna, sql in MIGRACIONES:
+            cols = {r["name"] for r in con.execute(f"PRAGMA table_info({tabla})")}
+            if columna not in cols:
+                con.execute(sql)
 
 
 @contextmanager

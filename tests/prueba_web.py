@@ -72,8 +72,35 @@ try:
     r = httpx.get(base + "/resultados", headers=auth)
     chequear(r.status_code == 200 and "1 de 2" in r.text, "Resultados: 1 de 2 acertadas")
     chequear("59 %" in r.text, "mínimo para no perder con cuota 1,70 (59 %)")
+    r = httpx.get(base + "/", headers=auth)
+    chequear('name="cuota"' in r.text and "Apostar" in r.text, "Hoy tiene campo de cuota y botón Apostar")
+    import re
+    pid = int(re.search(r'data-id="(\d+)"', r.text).group(1))
+    api = {**auth, "Content-Type": "application/json"}
+    chequear(httpx.post(base + "/api/apostar", headers=api, json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"})
+             .status_code == 403, "API sin encabezado del panel: 403")
+    chequear(httpx.post(base + "/api/apostar", headers={**api, "X-Senales": "1", "Origin": "https://malo.com"},
+                        json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"}).status_code == 403,
+             "API desde otro sitio: 403")
+    chequear(httpx.post(base + "/api/apostar", json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"},
+                        headers={"X-Senales": "1"}).status_code == 401, "API sin clave: 401")
+    ok_h = {**api, "X-Senales": "1"}
+    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "1,85", "monto": "5000"})
+    chequear(r.status_code == 200 and r.json()["cuota"] == 1.85, "registra apuesta con cuota 1,85")
+    aid = r.json()["apuesta_id"]
+    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "1,9", "monto": "5000"})
+    chequear(r.status_code == 400 and "ya tiene" in r.json()["error"], "no permite apostar dos veces la misma")
+    r = httpx.post(base + "/api/apostar", headers=ok_h, json={"proyeccion_id": pid, "cuota": "0,5", "monto": "5000"})
+    chequear(r.status_code == 400, "rechaza cuota inválida")
+    chequear("Apostada a" in httpx.get(base + "/", headers=auth).text, "Hoy muestra la apuesta registrada")
+    r = httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "ganada"})
+    chequear(r.status_code == 200 and r.json()["ganancia"] == 4250.0, "resultado ganada: +$4.250")
+    r = httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "anulada"})
+    chequear(r.status_code == 200 and r.json()["estado"] == "nula", "se puede corregir a anulada")
+    httpx.post(base + "/api/resultado", headers=ok_h, json={"apuesta_id": aid, "estado": "ganada"})
     r = httpx.get(base + "/apuestas", headers=auth)
-    chequear(r.status_code == 200, "Mis apuestas responde")
+    chequear(r.status_code == 200 and "a mano" in r.text and "+$4.250" in r.text, "Mis apuestas: ganada a mano")
+    chequear("sel-ganada" in r.text, "botón Ganada marcado")
     chequear(r.headers.get("x-robots-tag", "").startswith("noindex"), "no indexable")
 finally:
     srv.terminate()

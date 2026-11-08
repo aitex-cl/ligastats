@@ -1,9 +1,10 @@
-"""Panel web de LigaStats (solo lectura), protegido con usuario y clave.
+"""Panel web de LigaStats, protegido con usuario y clave.
 
 Pantallas:
   /            Hoy: candidatas de hoy y mañana (foco por defecto, ?todas=1 para ver todo)
   /resultados  Candidatas ya jugadas con su resultado y el acierto contra el mínimo exigido
-  /apuestas    Apuestas reales registradas
+  /apuestas    Apuestas reales registradas (con botones de resultado)
+  POST /api/apostar, /api/resultado   registran apuesta y resultado manual
 
 Escucha en 127.0.0.1:8011; nginx lo publica en https://stat.aitex.cl/.
 """
@@ -20,8 +21,10 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.requests import Request
 from starlette.routing import Route
 
+from . import apuestas as reg_apuestas
 from . import config, db
 from .rendimiento import acierto_vs_minimo, rendimiento_apuestas
 
@@ -97,10 +100,38 @@ h2{font-size:15px;margin:22px 0 8px;color:var(--s);font-weight:600;text-transfor
 .tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--b);color:var(--s)}
 .ok{color:var(--ok)}.no{color:var(--no)}.cuota{font-size:18px;font-weight:700;color:var(--a)}
 .res{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
-.res div{border:1px solid var(--b);border-radius:12px;padding:10px;background:var(--c)}
+.res>div{border:1px solid var(--b);border-radius:12px;padding:10px;background:var(--c)}
 .nota{color:var(--s);font-size:13px;margin:6px 0 14px}a.sw{color:var(--a);font-size:14px}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:7px 6px;border-bottom:1px solid var(--b);text-align:left}
 th{color:var(--s);font-weight:600;font-size:12px;text-transform:uppercase}td.r,th.r{text-align:right}
+.ap{display:flex;flex-direction:column;gap:6px;align-items:stretch;min-width:132px}
+.ap input{width:100%;font:inherit;font-size:16px;padding:7px 8px;border:1px solid var(--b);border-radius:8px;background:var(--f);color:var(--t)}
+.ap .dos{display:flex;gap:6px}.ap .dos input:first-child{flex:1.1}.ap .dos input:last-child{flex:1}
+button{font:inherit;font-size:14px;padding:8px 10px;border-radius:8px;border:1px solid var(--b);background:var(--f);color:var(--t);cursor:pointer}
+button.pri{background:var(--a);border-color:var(--a);color:#fff;font-weight:600}
+.btns{display:flex;gap:4px;width:100%}.btns button{flex:1 1 0;min-width:0;padding:7px 2px;font-size:12.5px}
+.btns button.sel-ganada{background:var(--ok);border-color:var(--ok);color:#fff}
+.btns button.sel-perdida{background:var(--no);border-color:var(--no);color:#fff}
+.btns button.sel-nula{background:var(--s);border-color:var(--s);color:#fff}
+.ver{font-size:12px;min-height:16px}.err{color:var(--no);font-size:12px}
+"""
+
+
+JS = """
+function num(v){v=(v||'').toString().replace(',','.').trim();return v===''?NaN:Number(v)}
+function veredicto(inp){const c=inp.closest('.ap'),min=Number(c.dataset.min),v=num(inp.value),o=c.querySelector('.ver');
+ if(isNaN(v)){o.textContent='mín. '+min.toFixed(2).replace('.',',');o.className='ver m';return}
+ if(v>=min){o.textContent='✓ conviene';o.className='ver ok'}else{o.textContent='✗ bajo el mínimo';o.className='ver no'}}
+async function enviar(url,datos,boton){boton.disabled=true;const caja=boton.closest('.ap,.btns').parentElement;
+ const e=caja.querySelector('.err');if(e)e.textContent='';
+ try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Senales':'1'},
+   body:JSON.stringify(datos)});const j=await r.json();if(!r.ok||j.error)throw new Error(j.error||'error');location.reload()}
+ catch(x){boton.disabled=false;if(e)e.textContent=x.message}}
+function apostar(b){const c=b.closest('.ap');const cuota=c.querySelector('[name=cuota]').value,monto=c.querySelector('[name=monto]').value;
+ const v=num(cuota);if(isNaN(v)){c.querySelector('.err').textContent='Ingresa la cuota';return}
+ if(v<Number(c.dataset.min)&&!confirm('La cuota está bajo el mínimo. ¿Registrar igual?'))return;
+ enviar('/api/apostar',{proyeccion_id:Number(c.dataset.id),cuota:cuota,monto:monto},b)}
+function resultado(b,id,estado){enviar('/api/resultado',{apuesta_id:id,estado:estado},b)}
 """
 
 
@@ -112,7 +143,7 @@ def pagina(titulo: str, activa: str, cuerpo: str) -> HTMLResponse:
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
 <title>{escape(titulo)}</title><style>{CSS}</style></head><body>
 <header><b>Señales</b> <span class="m">· {datetime.now(TZ_CL):%d-%m %H:%M}</span><nav>{enlaces}</nav></header>
-<main>{cuerpo}</main></body></html>"""
+<main>{cuerpo}</main><script>{JS}</script></body></html>"""
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
@@ -123,7 +154,40 @@ def descripcion_foco() -> str:
             f"piso de cuota {num(config.CUOTA_PISO)}")
 
 
-def tarjeta_candidata(f: dict, con_resultado: bool = False) -> str:
+def botones_resultado(a: dict) -> str:
+    sel = a["estado"] if a.get("liquidado_por") == "manual" or a["estado"] != "pendiente" else ""
+    def b(estado, txt):
+        clase = f' class="sel-{estado}"' if sel == estado else ""
+        return f'<button{clase} onclick="resultado(this,{a["id"]},\'{estado}\')">{txt}</button>'
+    return (f'<div class="btns">{b("ganada", "Ganada")}{b("perdida", "Perdida")}{b("nula", "Anulada")}</div>'
+            f'<div class="err"></div>')
+
+
+def caja_apuesta(f: dict, apuesta: dict | None, monto_defecto: float) -> str:
+    if apuesta:
+        est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>',
+               "nula": '<span class="m">anulada</span>'}.get(apuesta["estado"], '<span class="m">pendiente</span>')
+        return (f'<div class="ap"><div class="m">Apostada a <b>{num(apuesta["cuota"])}</b> · '
+                f'{pesos(apuesta["monto"]).replace("+", "")}</div><div class="m">Resultado: {est}</div>'
+                f'<div>{botones_resultado(apuesta)}</div></div>')
+    return (f'<div class="ap" data-id="{f["id"]}" data-min="{f["desde"]:.2f}">'
+            f'<div class="m">apostar si paga <b class="cuota" style="font-size:15px">≥ {num(f["desde"])}</b></div>'
+            f'<div class="dos"><input name="cuota" inputmode="decimal" placeholder="cuota" autocomplete="off" '
+            f'oninput="veredicto(this)"><input name="monto" inputmode="numeric" value="{monto_defecto:.0f}" '
+            f'aria-label="monto"></div><div class="ver m">mín. {num(f["desde"])}</div>'
+            f'<button class="pri" onclick="apostar(this)">Apostar</button><div class="err"></div></div>')
+
+
+def apuestas_por_proyeccion(ids: list[int]) -> dict[int, dict]:
+    if not ids:
+        return {}
+    with db.conexion() as con:
+        filas = con.execute(f"SELECT * FROM apuestas WHERE proyeccion_id IN ({','.join('?' * len(ids))})", ids)
+        return {r["proyeccion_id"]: dict(r) for r in filas}
+
+
+def tarjeta_candidata(f: dict, con_resultado: bool = False, apuesta: dict | None = None,
+                      monto_defecto: float = 5000, con_apuesta: bool = False) -> str:
     arb = f' · árb. {escape(f["arbitro"])}' if f.get("arbitro") else ""
     linea = f'{LADO[f["lado"]]} {num(f["linea"], 1)} {MERCADO[f["mercado"]].lower()}'
     if con_resultado:
@@ -133,23 +197,30 @@ def tarjeta_candidata(f: dict, con_resultado: bool = False) -> str:
             der = f'<span class="big no">✗</span><div class="m">hubo {num(f["valor_real"], 0)}</div>'
         else:
             der = '<span class="tag">anulada</span>'
+    elif con_apuesta:
+        der = caja_apuesta(f, apuesta, monto_defecto)
     else:
         der = f'<div class="m">apostar si paga</div><div class="cuota">≥ {num(f["desde"])}</div>'
     return f"""<div class="card"><div class="fila"><div>
 <div class="p">{escape(f["local"])} – {escape(f["visita"])}</div>
 <div class="m">{f["inicio"]:%d-%m %H:%M} · {NOMBRE_LIGA.get(f["liga"], f["liga"])}{arb}</div>
 <div style="margin-top:6px">{linea} <span class="tag">modelo {pct(f["prob"])}</span></div>
-</div><div style="text-align:right;min-width:92px">{der}</div></div></div>"""
+</div><div style="text-align:right;min-width:92px;width:{'172px' if con_apuesta else 'auto'};flex-shrink:0">{der}</div></div></div>"""
 
 
 # ------------------------------------------------------------------ pantallas
 async def hoy(request):
     todas = request.query_params.get("todas") == "1"
     ahora = datetime.now(TZ_CL)
-    filas = candidatas(ahora.date() - timedelta(days=1), ahora.date() + timedelta(days=2), ("pendiente",))
-    filas = [f for f in filtro_foco(filas, todas)
-             if f["inicio"] >= ahora - timedelta(minutes=15) and f["inicio"].date() <= ahora.date() + timedelta(days=1)]
+    filas = candidatas(ahora.date() - timedelta(days=1), ahora.date() + timedelta(days=2),
+                       ("pendiente", "acertada", "fallada", "nula"))
+    apostadas = apuestas_por_proyeccion([f["id"] for f in filas])
+    filas = [f for f in filas if f["id"] in apostadas or f in filtro_foco([f], todas)]
+    filas = [f for f in filas if f["inicio"].date() <= ahora.date() + timedelta(days=1) and (
+        (f["estado"] == "pendiente" and f["inicio"] >= ahora - timedelta(minutes=15))
+        or (f["id"] in apostadas and f["inicio"].date() == ahora.date()))]
     filas.sort(key=lambda f: (f["inicio"], -f["prob"]))
+    monto_defecto = reg_apuestas.ultimo_monto()
     cambiar = ('<a class="sw" href="/">Ver solo mi foco</a>' if todas
                else '<a class="sw" href="/?todas=1">Ver todas las candidatas</a>')
     cuerpo = [f'<p class="nota">{"Todas las candidatas" if todas else "Foco: " + descripcion_foco()}. '
@@ -162,9 +233,11 @@ async def hoy(request):
             dia_actual = f["inicio"].date()
             nombre = "Hoy" if dia_actual == ahora.date() else "Mañana"
             cuerpo.append(f"<h2>{nombre} · {dia_actual:%d-%m}</h2>")
-        cuerpo.append(tarjeta_candidata(f))
-    cuerpo.append('<p class="nota">Regla: apostar solo si la casa paga la cuota indicada o más. '
-                  'Si la casa ofrece otra línea, pídele el cálculo a Claude.</p>')
+        cuerpo.append(tarjeta_candidata(f, apuesta=apostadas.get(f["id"]), monto_defecto=monto_defecto,
+                                        con_apuesta=True))
+    cuerpo.append('<p class="nota">Escribe la cuota que ofrece la casa: te dice al tiro si conviene. '
+                  '"Apostar" la registra con ese monto. El resultado se cierra solo con los datos oficiales; '
+                  'si lo marcas a mano, manda el tuyo. Si la casa ofrece otra línea, pídele el cálculo a Claude.</p>')
     return pagina("Hoy", "hoy", "".join(cuerpo))
 
 
@@ -247,23 +320,61 @@ async def apuestas(request):
 <div><div class="m">CLV medio</div><div class="big">{pct(t["clv_medio"]) if t["clv_medio"] is not None else "—"}</div></div>
 </div>""")
     if r.get("pendientes"):
-        cuerpo.append(f'<p class="nota">{r["pendientes"]} apuestas esperan resultado.</p>')
+        n = r["pendientes"]
+        cuerpo.append(f'<p class="nota">{n} {"apuesta espera" if n == 1 else "apuestas esperan"} resultado.</p>')
     if not lista:
         cuerpo.append('<div class="card">Aún no hay apuestas registradas. Pídele a Claude que registre '
                       'cada apuesta con su cuota y monto.</div>')
-    filas = []
+    if lista:
+        cuerpo.append("<h2>Detalle</h2>")
     for a in lista:
-        est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>'}.get(
-            a["estado"], f'<span class="m">{a["estado"]}</span>')
-        filas.append(f'<tr><td>{a["fecha"][8:10]}-{a["fecha"][5:7]}</td>'
-                     f'<td>{escape(a["local"] or "")} – {escape(a["visita"] or "")}<div class="m">'
-                     f'{LADO.get(a["lado"], a["lado"])} {num(a["linea"], 1)} {MERCADO.get(a["mercado"], a["mercado"]).lower()}'
-                     f'</div></td><td class="r">{num(a["cuota"])}</td><td class="r">{pesos(-a["monto"]).replace("−", "")}</td>'
-                     f'<td class="r">{est}<div class="m">{pesos(a["ganancia"]) if a["ganancia"] is not None else ""}</div></td></tr>')
-    if filas:
-        cuerpo.append('<h2>Detalle</h2><table><tr><th>Fecha</th><th>Partido</th><th class="r">Cuota</th>'
-                      '<th class="r">Monto</th><th class="r">Estado</th></tr>' + "".join(filas) + "</table>")
+        est = {"ganada": '<span class="ok">ganada</span>', "perdida": '<span class="no">perdida</span>',
+               "nula": '<span class="m">anulada</span>'}.get(a["estado"], '<span class="m">pendiente</span>')
+        origen = " · a mano" if a.get("liquidado_por") == "manual" else ""
+        linea = f'{LADO.get(a["lado"], a["lado"])} {num(a["linea"], 1)} {MERCADO.get(a["mercado"], a["mercado"]).lower()}'
+        gan = f' · {pesos(a["ganancia"])}' if a["ganancia"] is not None and a["estado"] != "pendiente" else ""
+        cuerpo.append(f"""<div class="card"><div class="fila"><div>
+<div class="p">{escape(a["local"] or "")} – {escape(a["visita"] or "")}</div>
+<div class="m">{a["fecha"][8:10]}-{a["fecha"][5:7]} · {NOMBRE_LIGA.get(a["liga"], a["liga"] or "")}</div>
+<div style="margin-top:6px">{linea}</div>
+<div class="m">cuota {num(a["cuota"])} · {pesos(a["monto"]).replace("+", "")}{gan}</div>
+</div><div style="text-align:right;width:172px;flex-shrink:0"><div class="m">{est}{origen}</div>
+<div style="margin-top:6px">{botones_resultado(a)}</div></div></div></div>""")
     return pagina("Mis apuestas", "ap", "".join(cuerpo))
+
+
+def _origen_valido(request: Request) -> bool:
+    """Protección contra envíos desde otros sitios: exige el encabezado propio del panel y,
+    si el navegador manda Origin, que sea este mismo sitio."""
+    if request.headers.get("x-senales") != "1":
+        return False
+    origen = request.headers.get("origin")
+    if origen:
+        host = request.headers.get("host", "")
+        return origen in (f"https://{host}", f"http://{host}")
+    return True
+
+
+async def api_apostar(request: Request):
+    if not _origen_valido(request):
+        return JSONResponse({"error": "solicitud no permitida"}, status_code=403)
+    try:
+        d = await request.json()
+        r = reg_apuestas.registrar(d.get("cuota"), d.get("monto"), int(d.get("proyeccion_id")), casa="panel")
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(r)
+
+
+async def api_resultado(request: Request):
+    if not _origen_valido(request):
+        return JSONResponse({"error": "solicitud no permitida"}, status_code=403)
+    try:
+        d = await request.json()
+        r = reg_apuestas.marcar_resultado(int(d.get("apuesta_id")), str(d.get("estado")))
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(r)
 
 
 async def salud(request):
@@ -296,6 +407,8 @@ class Autenticacion(BaseHTTPMiddleware):
 
 def crear_app() -> Starlette:
     return Starlette(routes=[Route("/", hoy), Route("/resultados", resultados), Route("/apuestas", apuestas),
+                             Route("/api/apostar", api_apostar, methods=["POST"]),
+                             Route("/api/resultado", api_resultado, methods=["POST"]),
                              Route("/salud", salud)],
                      middleware=[Middleware(Autenticacion)])
 
