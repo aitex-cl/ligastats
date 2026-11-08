@@ -1,13 +1,13 @@
-# LigaStats v1.0 — proyecciones de goles, tarjetas y corners
+# LigaStats v1.1 — proyecciones de tarjetas, corners y goles
 
 ## Instalación en el VPS (voceo.aitex.cl)
 
 ```bash
 # desde tu PC
-scp ligastats-v1.0.tar.gz root@154.12.231.28:/root/
+scp ligastats-v1.1.tar.gz root@154.12.231.28:/root/
 
 # en el servidor
-cd /root && tar xzf ligastats-v1.0.tar.gz && cd ligastats
+cd /root && rm -rf ligastats && tar xzf ligastats-v1.1.tar.gz && cd ligastats
 bash instalar.sh
 ```
 
@@ -47,3 +47,26 @@ journalctl -u ligastats-diario -n 50       # última actualización
 systemctl list-timers 'ligastats-*'        # próximas ejecuciones
 systemctl start ligastats-diario           # actualizar ahora
 ```
+
+## Despliegue automático (GitHub → VPS)
+
+Repositorio `aitex-cl/ligastats`. Cada merge a `main` corre las pruebas y, si pasan, despliega.
+
+Preparación única en el VPS (después de instalar la v1.1):
+```bash
+bash deploy/preparar_despliegue.sh
+```
+Muestra tres valores para cargar en GitHub (Settings → Secrets and variables → Actions):
+`VPS_HOST`, `VPS_KNOWN_HOSTS` y `VPS_SSH_KEY`.
+
+- El usuario `despliegue` solo puede ejecutar `/opt/ligastats/bin/desplegar` (sin terminal ni túneles).
+- Acepta únicamente: un commit (instala ese código), `rollback` o `estado`.
+- Desde GitHub → Actions → "LigaStats CI/CD" → Run workflow se puede pedir `rollback` o `estado`.
+- La clave del MCP nunca se imprime en los registros de GitHub.
+- Registro de despliegues en el servidor: `/opt/ligastats/shared/logs/despliegues.log`.
+
+## Novedades v1.1
+- Foco en tarjetas (sobre todo "menos"); corners en observación; goles solo como proyección.
+- Candidatas desde 55 %; cuota mínima = max(cuota justa + 5 %, piso 1,70).
+- Métricas de acierto contra el mínimo que exige la cuota y probabilidad de que sea suerte.
+- Parámetros ajustables desde Claude (`ver_parametros`, `ajustar_parametro`), con historial.

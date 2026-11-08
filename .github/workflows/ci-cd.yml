@@ -42,7 +42,19 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      - name: Verificar secretos
+        id: secretos
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          if [ -z "$VPS_HOST" ]; then
+            echo "::warning::Faltan los secretos VPS_HOST / VPS_KNOWN_HOSTS / VPS_SSH_KEY: no se despliega."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Configurar SSH
+        if: steps.secretos.outputs.ok == 'true'
         env:
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
@@ -52,6 +64,7 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
       - name: Ejecutar en el VPS
+        if: steps.secretos.outputs.ok == 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           ACCION: ${{ inputs.accion || 'desplegar' }}
