@@ -62,12 +62,38 @@ def pesos(x) -> str:
     return "—" if x is None else ("−" if x < 0 else "+") + "$" + f"{abs(x):,.0f}".replace(",", ".")
 
 
-def filtro_foco(filas: list[dict], todas: bool) -> list[dict]:
+def filtro_foco(filas: list[dict], todas: bool, mercado: str | None = None) -> list[dict]:
+    """Filtra por mercado elegido y, salvo 'todas', por lados y ligas del foco."""
+    mercado = mercado or config.MERCADO_PRINCIPAL
+    filas = [f for f in filas if f["mercado"] == mercado]
     if todas:
         return filas
-    return [f for f in filas if f["mercado"] in config.MERCADOS_APUESTA
-            and f["mercado"] == config.MERCADO_PRINCIPAL
-            and f["lado"] in config.LADOS_FOCO and f["liga"] not in config.LIGAS_EXCLUIDAS]
+    return [f for f in filas if f["lado"] in config.LADOS_FOCO and f["liga"] not in config.LIGAS_EXCLUIDAS]
+
+
+def mercado_pedido(request) -> str:
+    m = request.query_params.get("mercado", "")
+    return m if m in config.MERCADOS else config.MERCADO_PRINCIPAL
+
+
+def selector_mercado(ruta: str, mercado: str, todas: bool, extra: str = "") -> str:
+    chips = []
+    for m in ("tarjetas", "corners", "goles"):
+        url = f"{ruta}?mercado={m}" + ("&todas=1" if todas else "") + extra
+        etiqueta = MERCADO[m] + (" ★" if m == config.MERCADO_PRINCIPAL else "")
+        chips.append(f'<a href="{url}" class="{"on" if m == mercado else ""}">{etiqueta}</a>')
+    aviso = ""
+    if mercado != config.MERCADO_PRINCIPAL:
+        aviso = ('<p class="nota"><b>En observación:</b> este mercado se mide para saber si el modelo acierta, '
+                 'pero no es tu foco de apuesta.</p>')
+    return f'<nav style="margin:4px 0 8px">{"".join(chips)}</nav>{aviso}'
+
+
+def descripcion_foco(mercado: str | None = None) -> str:
+    mercado = mercado or config.MERCADO_PRINCIPAL
+    lados = " y ".join(LADO[l].lower() for l in config.LADOS_FOCO)
+    excl = ", ".join(NOMBRE_LIGA.get(l, l) for l in config.LIGAS_EXCLUIDAS) or "ninguna"
+    return f"{MERCADO[mercado]} · {lados} · ligas excluidas: {excl} · piso de cuota {num(config.CUOTA_PISO)}"
 
 
 def candidatas(desde: date, hasta: date, estados: tuple[str, ...]) -> list[dict]:
@@ -147,13 +173,6 @@ def pagina(titulo: str, activa: str, cuerpo: str) -> HTMLResponse:
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
-def descripcion_foco() -> str:
-    lados = " y ".join(LADO[l].lower() for l in config.LADOS_FOCO)
-    excl = ", ".join(NOMBRE_LIGA.get(l, l) for l in config.LIGAS_EXCLUIDAS) or "ninguna"
-    return (f"{MERCADO[config.MERCADO_PRINCIPAL]} · {lados} · ligas excluidas: {excl} · "
-            f"piso de cuota {num(config.CUOTA_PISO)}")
-
-
 def botones_resultado(a: dict) -> str:
     sel = a["estado"] if a.get("liquidado_por") == "manual" or a["estado"] != "pendiente" else ""
     def b(estado, txt):
@@ -211,19 +230,21 @@ def tarjeta_candidata(f: dict, con_resultado: bool = False, apuesta: dict | None
 # ------------------------------------------------------------------ pantallas
 async def hoy(request):
     todas = request.query_params.get("todas") == "1"
+    mercado = mercado_pedido(request)
     ahora = datetime.now(TZ_CL)
     filas = candidatas(ahora.date() - timedelta(days=1), ahora.date() + timedelta(days=2),
                        ("pendiente", "acertada", "fallada", "nula"))
     apostadas = apuestas_por_proyeccion([f["id"] for f in filas])
-    filas = [f for f in filas if f["id"] in apostadas or f in filtro_foco([f], todas)]
+    filas = [f for f in filas if (f["id"] in apostadas and f["mercado"] == mercado) or f in filtro_foco([f], todas, mercado)]
     filas = [f for f in filas if f["inicio"].date() <= ahora.date() + timedelta(days=1) and (
         (f["estado"] == "pendiente" and f["inicio"] >= ahora - timedelta(minutes=15))
         or (f["id"] in apostadas and f["inicio"].date() == ahora.date()))]
     filas.sort(key=lambda f: (f["inicio"], -f["prob"]))
     monto_defecto = reg_apuestas.ultimo_monto()
-    cambiar = ('<a class="sw" href="/">Ver solo mi foco</a>' if todas
-               else '<a class="sw" href="/?todas=1">Ver todas las candidatas</a>')
-    cuerpo = [f'<p class="nota">{"Todas las candidatas" if todas else "Foco: " + descripcion_foco()}. '
+    cambiar = (f'<a class="sw" href="/?mercado={mercado}">Ver solo mi foco</a>' if todas
+               else f'<a class="sw" href="/?mercado={mercado}&todas=1">Ver todas las candidatas</a>')
+    cuerpo = [selector_mercado("/", mercado, todas),
+              f'<p class="nota">{"Todas las candidatas de " + MERCADO[mercado].lower() if todas else "Foco: " + descripcion_foco(mercado)}. '
               f'Horas de Chile. {cambiar}</p>']
     if not filas:
         cuerpo.append('<div class="card">No hay candidatas pendientes para hoy ni mañana.</div>')
@@ -260,20 +281,22 @@ def bloque_resumen(filas: list[dict], titulo: str) -> str:
 
 async def resultados(request):
     todas = request.query_params.get("todas") == "1"
+    mercado = mercado_pedido(request)
     try:
         dias = max(1, min(int(request.query_params.get("dias", "14")), 120))
     except ValueError:
         dias = 14
     hoy_cl = datetime.now(TZ_CL).date()
-    filas = filtro_foco(candidatas(hoy_cl - timedelta(days=dias), hoy_cl, ("acertada", "fallada", "nula")), todas)
-    pend = [f for f in filtro_foco(candidatas(hoy_cl - timedelta(days=dias), hoy_cl, ("pendiente",)), todas)
+    filas = filtro_foco(candidatas(hoy_cl - timedelta(days=dias), hoy_cl, ("acertada", "fallada", "nula")), todas, mercado)
+    pend = [f for f in filtro_foco(candidatas(hoy_cl - timedelta(days=dias), hoy_cl, ("pendiente",)), todas, mercado)
             if f["inicio"] < datetime.now(TZ_CL)]
     filas.sort(key=lambda f: f["inicio"], reverse=True)
-    cambiar = ('<a class="sw" href="/resultados">Ver solo mi foco</a>' if todas
-               else '<a class="sw" href="/resultados?todas=1">Ver todas</a>')
-    cuerpo = [f'<p class="nota">{"Todas las candidatas" if todas else "Foco: " + descripcion_foco()}. '
+    cambiar = (f'<a class="sw" href="/resultados?mercado={mercado}&dias={dias}">Ver solo mi foco</a>' if todas
+               else f'<a class="sw" href="/resultados?mercado={mercado}&dias={dias}&todas=1">Ver todas</a>')
+    cuerpo = [selector_mercado("/resultados", mercado, todas, f"&dias={dias}"),
+              f'<p class="nota">{"Todas las candidatas de " + MERCADO[mercado].lower() if todas else "Foco: " + descripcion_foco(mercado)}. '
               f'Últimos {dias} días. {cambiar} · '
-              + " ".join(f'<a class="sw" href="/resultados?dias={d}{"&todas=1" if todas else ""}">{d} d</a>'
+              + " ".join(f'<a class="sw" href="/resultados?mercado={mercado}&dias={d}{"&todas=1" if todas else ""}">{d} d</a>'
                          for d in (7, 14, 30, 90)) + "</p>"]
     if not filas:
         cuerpo.append('<div class="card">Todavía no hay candidatas con resultado en este período. '
