@@ -1,0 +1,85 @@
+"""Levanta el panel web contra una copia de la base de prueba con candidatas de hoy y de ayer."""
+import base64
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import date, timedelta
+from pathlib import Path
+
+import httpx
+
+ORIGEN = Path(sys.argv[1]).resolve()
+DATOS = Path(tempfile.mkdtemp())
+shutil.copy(ORIGEN / "ligastats.db", DATOS / "ligastats.db")
+con = sqlite3.connect(DATOS / "ligastats.db")
+hoy, ayer = date.today(), date.today() - timedelta(days=1)
+campos = ("partido_id, liga, fecha, hora, local, visita, arbitro, mercado, linea, lado, media_esperada, prob, "
+          "cuota_justa, cuota_minima, tipo, version_modelo, creado_en")
+filas = [
+    ("E0|x|Arsenal|Chelsea", "E0", hoy.isoformat(), "23:59", "Arsenal", "Chelsea", "M Oliver", "tarjetas", 4.5,
+     "under", 3.9, 0.65, 1.54, 1.62, "candidata", "v1.1", "t"),
+    ("N1|x|Ajax|PSV", "N1", hoy.isoformat(), "23:59", "Ajax", "PSV", None, "tarjetas", 4.5,
+     "under", 3.9, 0.66, 1.52, 1.60, "candidata", "v1.1", "t"),
+    ("E0|y|Everton|Wolves", "E0", ayer.isoformat(), "15:00", "Everton", "Wolves", None, "tarjetas", 5.5,
+     "under", 4.1, 0.70, 1.43, 1.50, "candidata", "v1.1", "t"),
+    ("D1|y|Bayern|Mainz", "D1", ayer.isoformat(), "15:00", "Bayern", "Mainz", None, "tarjetas", 4.5,
+     "under", 3.6, 0.68, 1.47, 1.54, "candidata", "v1.1", "t"),
+]
+for f in filas:
+    con.execute(f"INSERT INTO proyecciones ({campos}) VALUES ({','.join('?' * 17)})", f)
+con.execute(f"UPDATE proyecciones SET estado='acertada', valor_real=3 WHERE local='Everton' AND fecha='{ayer.isoformat()}'")
+con.execute(f"UPDATE proyecciones SET estado='fallada', valor_real=6 WHERE local='Bayern' AND fecha='{ayer.isoformat()}'")
+con.execute("DELETE FROM parametros")  # valores por defecto
+con.commit()
+con.close()
+
+CLAVE = "clave-de-prueba-123"
+PUERTO = 8021
+env = {**os.environ, "LIGASTATS_DATA": str(DATOS), "LIGASTATS_WEB_CLAVE": CLAVE,
+       "LIGASTATS_WEB_PORT": str(PUERTO), "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}
+srv = subprocess.Popen([sys.executable, "-m", "ligastats.web"], cwd=Path(__file__).resolve().parent.parent,
+                       env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+base = f"http://127.0.0.1:{PUERTO}"
+fallas = []
+
+
+def chequear(cond, msg):
+    print(("OK   " if cond else "FALLA"), msg)
+    if not cond:
+        fallas.append(msg)
+
+
+try:
+    for _ in range(40):
+        try:
+            if httpx.get(base + "/salud", timeout=1).status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.25)
+    auth = {"Authorization": "Basic " + base64.b64encode(f"eduardo:{CLAVE}".encode()).decode()}
+    malo = {"Authorization": "Basic " + base64.b64encode(b"eduardo:otra").decode()}
+    chequear(httpx.get(base + "/").status_code == 401, "sin clave: 401")
+    chequear(httpx.get(base + "/", headers=malo).status_code == 401, "clave incorrecta: 401")
+    r = httpx.get(base + "/", headers=auth)
+    chequear(r.status_code == 200 and "Arsenal" in r.text, "Hoy muestra la candidata de la Premier")
+    chequear("Ajax" not in r.text, "Hoy oculta Holanda (fuera del foco)")
+    chequear("≥ 1,70" in r.text, "aplica el piso de cuota 1,70")
+    chequear("Ajax" in httpx.get(base + "/?todas=1", headers=auth).text, "Ver todas incluye Holanda")
+    r = httpx.get(base + "/resultados", headers=auth)
+    chequear(r.status_code == 200 and "1 de 2" in r.text, "Resultados: 1 de 2 acertadas")
+    chequear("59 %" in r.text, "mínimo para no perder con cuota 1,70 (59 %)")
+    r = httpx.get(base + "/apuestas", headers=auth)
+    chequear(r.status_code == 200, "Mis apuestas responde")
+    chequear(r.headers.get("x-robots-tag", "").startswith("noindex"), "no indexable")
+finally:
+    srv.terminate()
+    salida = srv.communicate(timeout=10)[0].decode(errors="replace")
+    shutil.rmtree(DATOS, ignore_errors=True)
+if fallas:
+    print(salida[-3000:])
+print("RESULTADO WEB:", "TODO OK" if not fallas else f"{len(fallas)} FALLAS")
+sys.exit(1 if fallas else 0)

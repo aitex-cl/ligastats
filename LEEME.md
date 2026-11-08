@@ -70,3 +70,12 @@ Muestra tres valores para cargar en GitHub (Settings → Secrets and variables �
 - Candidatas desde 55 %; cuota mínima = max(cuota justa + 5 %, piso 1,70).
 - Métricas de acierto contra el mínimo que exige la cuota y probabilidad de que sea suerte.
 - Parámetros ajustables desde Claude (`ver_parametros`, `ajustar_parametro`), con historial.
+
+## Panel web (https://stat.aitex.cl/)
+- Usuario `eduardo`; la clave se genera en la primera instalación y queda en el servidor:
+  `grep WEB_CLAVE /opt/ligastats/shared/config.env`
+- **Hoy:** candidatas de hoy y mañana con el foco aplicado (mercado principal, lados y ligas excluidas
+  ajustables desde Claude) y la cuota desde la que conviene apostar (incluye el piso).
+- **Resultados:** candidatas ya jugadas, acertadas o falladas, con acierto contra el mínimo exigido
+  y probabilidad de que sea suerte; por liga y en detalle.
+- **Mis apuestas:** apuestas registradas, resultado, acierto y CLV.

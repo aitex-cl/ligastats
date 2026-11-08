@@ -14,6 +14,7 @@ set -euo pipefail
 
 DOMINIO="stat.aitex.cl"
 PUERTO=8010
+PUERTO_WEB=8011
 BASE=/opt/ligastats
 USUARIO=ligastats
 ORIGEN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,11 +37,12 @@ estado() {
     paso "Estado de LigaStats"
     echo "Versión activa : $(readlink -f $BASE/current 2>/dev/null || echo 'ninguna')"
     echo "Versiones      : $(ls -1 $BASE/releases 2>/dev/null | tr '\n' ' ')"
-    for u in ligastats-mcp.service ligastats-diario.timer ligastats-backtest.timer; do
+    for u in ligastats-mcp.service ligastats-web.service ligastats-diario.timer ligastats-backtest.timer; do
         printf '%-26s %s\n' "$u" "$(systemctl is-active $u 2>/dev/null || true)"
     done
     systemctl list-timers 'ligastats-*' --no-pager 2>/dev/null | head -5 || true
     if curl -fsS -m 5 "http://127.0.0.1:$PUERTO/salud" >/dev/null 2>&1; then verde "MCP local responde"; else amarillo "MCP local no responde"; fi
+    if curl -fsS -m 5 "http://127.0.0.1:$PUERTO_WEB/salud" >/dev/null 2>&1; then verde "Panel web local responde"; else amarillo "Panel web local no responde"; fi
     if [[ -f /etc/letsencrypt/live/$DOMINIO/fullchain.pem ]]; then
         if [[ "$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://$DOMINIO/mcp" || true)" == "401" ]]; then
             verde "https://$DOMINIO/mcp publicado (pide clave, correcto)"
@@ -122,7 +124,7 @@ rollback() {
     anterior="$(ls -1d $BASE/releases/*/ | sed 's#/$##' | grep -v "^$actual$" | sort | tail -1)"
     [[ -n "$anterior" ]] || fallar "no hay versión anterior"
     ln -sfn "$anterior" "$BASE/current.tmp" && mv -Tf "$BASE/current.tmp" "$BASE/current"
-    systemctl restart ligastats-mcp.service
+    systemctl restart ligastats-mcp.service ligastats-web.service
     verde "Activa: $anterior (la base de datos no se toca)"
 }
 
@@ -139,6 +141,10 @@ instalar() {
     fi
     if [[ -n "$ocupado" ]] && ! systemctl is-active --quiet ligastats-mcp.service; then
         fallar "el puerto $PUERTO está en uso por otro proceso python: $ocupado"
+    fi
+    ocupado="$(ss -tlnpH "sport = :$PUERTO_WEB" 2>/dev/null || true)"
+    if [[ -n "$ocupado" ]] && ! systemctl is-active --quiet ligastats-web.service; then
+        fallar "el puerto $PUERTO_WEB está en uso por otro servicio: $ocupado"
     fi
     verde "OK"
 
@@ -168,6 +174,14 @@ LIGASTATS_MCP_TOKEN=$(openssl rand -hex 32)
 EOF
         umask 022
         verde "Clave del MCP generada"
+    fi
+    if ! grep -q '^LIGASTATS_WEB_CLAVE=' "$ENVFILE"; then
+        {
+            echo "LIGASTATS_WEB_PORT=$PUERTO_WEB"
+            echo "LIGASTATS_WEB_USUARIO=eduardo"
+            echo "LIGASTATS_WEB_CLAVE=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-16)"
+        } >> "$ENVFILE"
+        verde "Clave del panel web generada"
     fi
     chown "$USUARIO:$USUARIO" "$ENVFILE"; chmod 600 "$ENVFILE"
     verde "Usuario $USUARIO, carpeta $BASE"
@@ -207,19 +221,29 @@ EOF
     install -o root -g root -m 755 "$ORIGEN/deploy/bin/desplegar" "$BASE/bin/.desplegar.nuevo"
     mv -f "$BASE/bin/.desplegar.nuevo" "$BASE/bin/desplegar"
     systemctl daemon-reload
-    systemctl enable --quiet ligastats-mcp.service ligastats-diario.timer ligastats-backtest.timer
-    systemctl restart ligastats-mcp.service
+    systemctl enable --quiet ligastats-mcp.service ligastats-web.service ligastats-diario.timer ligastats-backtest.timer
+    systemctl restart ligastats-mcp.service ligastats-web.service
     systemctl start ligastats-diario.timer ligastats-backtest.timer
     local ok=0
     for _ in $(seq 1 20); do
         if curl -fsS -m 2 "http://127.0.0.1:$PUERTO/salud" >/dev/null 2>&1; then ok=1; break; fi
         sleep 1
     done
+    local web=0 i
+    for i in $(seq 1 20); do
+        if curl -fsS -m 2 "http://127.0.0.1:$PUERTO_WEB/salud" >/dev/null 2>&1; then web=1; break; fi
+        sleep 1
+    done
+    if ((ok && !web)); then
+        ok=0
+        journalctl -u ligastats-web.service -n 30 --no-pager || true
+    fi
+    : "$i"
     if ((ok)); then
-        verde "MCP escuchando en 127.0.0.1:$PUERTO"
+        verde "MCP escuchando en 127.0.0.1:$PUERTO y panel web en 127.0.0.1:$PUERTO_WEB"
     else
         journalctl -u ligastats-mcp.service -n 30 --no-pager
-        rojo "El MCP no arrancó; volviendo a la versión anterior"
+        rojo "El MCP o el panel web no arrancó; volviendo a la versión anterior"
         rollback || true
         exit 1
     fi
@@ -250,12 +274,14 @@ EOF
     echo
     verde "Datos para agregar el conector en Claude (Customize > Connectors > Add > Custom > Web):"
     echo "  URL     : https://$DOMINIO/mcp"
+    verde "Panel web: https://$DOMINIO/  (usuario: eduardo)"
     if [[ -t 1 ]]; then
+        echo "  Clave panel: $(grep LIGASTATS_WEB_CLAVE "$ENVFILE" | cut -d= -f2)"
         echo "  Header  : Authorization: Bearer $(grep LIGASTATS_MCP_TOKEN "$ENVFILE" | cut -d= -f2)"
         amarillo "Guarda la clave en un lugar seguro y no la compartas."
     else
         # despliegue automático: la clave nunca se imprime en los registros de GitHub
-        echo "  Header  : Authorization: Bearer (oculta; en el servidor: grep TOKEN $ENVFILE)"
+        echo "  Claves ocultas en despliegues automáticos. En el servidor: grep -E 'WEB_CLAVE|TOKEN' $ENVFILE"
     fi
 }
 

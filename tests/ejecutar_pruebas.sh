@@ -32,4 +32,6 @@ echo "== Prueba de punta a punta"
 
 echo "== Prueba del servidor MCP"
 "$PY" tests/prueba_mcp.py "$TMP/datos"
+echo "== Prueba del panel web"
+"$PY" tests/prueba_web.py "$TMP/datos"
 echo "TODAS LAS PRUEBAS OK"
