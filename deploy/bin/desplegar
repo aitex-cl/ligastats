@@ -19,9 +19,9 @@ echo "=== $(date -Is) despliegue: ${ARG:-<vacío>}" | tee -a "$LOG"
 
 case "$ARG" in
     rollback)
-        bash "$BASE/current/instalar.sh" --rollback 2>&1 | tee -a "$LOG" ;;
+        bash "$BASE/current/instalar.sh" --rollback 9>&- 2>&1 | tee -a "$LOG" ;;
     estado)
-        bash "$BASE/current/instalar.sh" --estado 2>&1 | tee -a "$LOG" ;;
+        bash "$BASE/current/instalar.sh" --estado 9>&- 2>&1 | tee -a "$LOG" ;;
     *)
         [[ "$ARG" =~ ^[0-9a-f]{40}$ ]] || { echo "Argumento no permitido" | tee -a "$LOG"; exit 2; }
         tmp="$(mktemp -d /tmp/ligastats-despliegue-XXXXXX)"
@@ -31,6 +31,6 @@ case "$ARG" in
             || { echo "Paquete incompleto" | tee -a "$LOG"; exit 3; }
         echo "$ARG" > "$tmp/VERSION_COMMIT"
         cd "$tmp"
-        bash instalar.sh 2>&1 | tee -a "$LOG"
+        bash instalar.sh 9>&- 2>&1 | tee -a "$LOG"
         ;;
 esac
