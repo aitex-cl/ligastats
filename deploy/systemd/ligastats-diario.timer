@@ -1,0 +1,10 @@
+[Unit]
+Description=LigaStats - actualización 3 veces al día (hora de Chile)
+
+[Timer]
+OnCalendar=*-*-* 08,14,20:15:00 America/Santiago
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

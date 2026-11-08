@@ -1,0 +1,64 @@
+name: LigaStats CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Qué hacer en el VPS"
+        type: choice
+        options: [desplegar, rollback, estado]
+        default: desplegar
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    if: github.event_name != 'workflow_dispatch' || inputs.accion == 'desplegar'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: bash tests/ejecutar_pruebas.sh
+
+  desplegar:
+    needs: pruebas
+    if: >-
+      always() && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.pruebas.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+          (inputs.accion != 'desplegar' || needs.pruebas.result == 'success'))
+      )
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: ligastats-produccion
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: Ejecutar en el VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          ACCION: ${{ inputs.accion || 'desplegar' }}
+        run: |
+          SSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 despliegue@${VPS_HOST}"
+          if [ "$ACCION" = "desplegar" ]; then
+            git archive --format=tar.gz HEAD | $SSH "$GITHUB_SHA"
+          else
+            $SSH "$ACCION" < /dev/null
+          fi

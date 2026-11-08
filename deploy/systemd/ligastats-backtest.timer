@@ -1,0 +1,9 @@
+[Unit]
+Description=LigaStats - backtest los lunes 04:30 (hora de Chile)
+
+[Timer]
+OnCalendar=Mon *-*-* 04:30 America/Santiago
+Persistent=true
+
+[Install]
+WantedBy=timers.target

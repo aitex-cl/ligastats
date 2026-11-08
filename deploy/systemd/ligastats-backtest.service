@@ -1,0 +1,26 @@
+[Unit]
+Description=LigaStats - backtest semanal
+
+[Service]
+Type=oneshot
+User=ligastats
+Group=ligastats
+Slice=ligastats.slice
+WorkingDirectory=/opt/ligastats/current
+EnvironmentFile=/opt/ligastats/shared/config.env
+Environment=LIGASTATS_HOME=/opt/ligastats/current
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/ligastats/shared
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ExecStart=/opt/ligastats/venv/bin/python -m ligastats.actualizar backtest
+TimeoutStartSec=2h
