@@ -18,7 +18,7 @@ from mcp.types import ToolAnnotations
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from . import backtest, cargar, config, db, rendimiento, senales
+from . import apuestas, backtest, cargar, config, db, rendimiento, senales
 
 LECTURA = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 ESCRITURA = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
@@ -219,29 +219,21 @@ def registrar_apuesta(cuota: float, monto: float, proyeccion_id: int | None = No
                       casa: str | None = None, nota: str | None = None) -> dict:
     """Registra una apuesta hecha. Lo normal es pasar proyeccion_id (de senales_proximas); si la apuesta
     no viene de una proyección, indicar liga, fecha, local, visita, mercado, linea y lado.
-    Una vez registrada no se puede modificar."""
-    if cuota <= 1 or monto <= 0:
-        return {"error": "cuota debe ser > 1 y monto > 0"}
-    if proyeccion_id is not None:
-        p = _filas("SELECT * FROM proyecciones WHERE id = ?", (proyeccion_id,))
-        if not p:
-            return {"error": f"no existe la proyección {proyeccion_id}"}
-        p = p[0]
-        datos = {k: p[k] for k in ("partido_id", "liga", "fecha", "local", "visita", "mercado", "linea", "lado")}
-    else:
-        faltan = [k for k, v in dict(liga=liga, fecha=fecha, local=local, visita=visita, mercado=mercado,
-                                     linea=linea, lado=lado).items() if v is None]
-        if faltan:
-            return {"error": "faltan datos", "campos": faltan}
-        datos = dict(partido_id=f"{liga}|{fecha}|{local}|{visita}", liga=liga, fecha=fecha, local=local,
-                     visita=visita, mercado=mercado, linea=linea, lado=lado)
-    with db.conexion() as con:
-        aid = con.execute(
-            "INSERT INTO apuestas (proyeccion_id, partido_id, liga, fecha, local, visita, mercado, linea, lado, "
-            "cuota, monto, casa, nota, creado_en) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (proyeccion_id, datos["partido_id"], datos["liga"], datos["fecha"], datos["local"], datos["visita"],
-             datos["mercado"], datos["linea"], datos["lado"], cuota, monto, casa, nota, db.ahora())).lastrowid
-    return {"ok": True, "apuesta_id": aid, **datos, "cuota": cuota, "monto": monto}
+    Los datos de la apuesta no se pueden modificar después."""
+    try:
+        return apuestas.registrar(cuota, monto, proyeccion_id, casa, nota, liga=liga, fecha=fecha, local=local,
+                                  visita=visita, mercado=mercado, linea=linea, lado=lado)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool(annotations=ESCRITURA)
+def registrar_resultado(apuesta_id: int, resultado: Literal["ganada", "perdida", "anulada"]) -> dict:
+    """Marca a mano el resultado de una apuesta (manda sobre el cierre automático)."""
+    try:
+        return apuestas.marcar_resultado(apuesta_id, resultado)
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 @mcp.tool(annotations=ESCRITURA)

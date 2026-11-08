@@ -79,3 +79,6 @@ Muestra tres valores para cargar en GitHub (Settings → Secrets and variables �
 - **Resultados:** candidatas ya jugadas, acertadas o falladas, con acierto contra el mínimo exigido
   y probabilidad de que sea suerte; por liga y en detalle.
 - **Mis apuestas:** apuestas registradas, resultado, acierto y CLV.
+- En cada candidata de **Hoy**: campo de cuota (indica al tiro si conviene), monto y botón **Apostar**.
+  Ya registrada, botones **Ganada / Perdida / Anulada** (también en Mis apuestas). El resultado manual
+  manda sobre el cierre automático.
